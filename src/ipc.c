@@ -148,6 +148,7 @@ void ipc_send_event(const char *event, uint32_t message_type, const char *payloa
     ipc_client *current;
     TAILQ_FOREACH (current, &all_clients, clients) {
         for (int i = 0; i < current->num_events; i++) {
+            DLOG("Checking %s & %s\n", current->events[i], event);
             if (strcasecmp(current->events[i], event) == 0) {
                 ipc_send_client_message(current, strlen(payload), message_type, (uint8_t *)payload);
                 break;

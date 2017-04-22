@@ -102,7 +102,7 @@ struct assignments_head assignments = TAILQ_HEAD_INITIALIZER(assignments);
 struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignments);
 
 /* We hope that those are supported and set them to true */
-bool xkb_supported = true;
+bool xkb_supported = false;
 bool shape_supported = true;
 
 bool force_xinerama = false;
@@ -111,7 +111,6 @@ bool force_xinerama = false;
 #define xmacro(atom) xcb_atom_t A_##atom;
 I3_NET_SUPPORTED_ATOMS_XMACRO
 I3_REST_ATOMS_XMACRO
-#undef xmacro
 
 /*
  * This callback is only a dummy, see xcb_prepare_cb.
@@ -146,8 +145,17 @@ static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
             continue;
         }
 
+        DLOG("event->response_type: %d\n", event->response_type);
+        DLOG("event->response_type & ~0x80: %d (%d)\n", event->response_type & ~0x80, XCB_KEY_RELEASE);
+
         /* Strip off the highest bit (set if the event is generated) */
         const int type = (event->response_type & 0x7F);
+
+        DLOG("type: %d\n", type);
+        if ((event->response_type & ~0x80) == XCB_KEY_RELEASE) {
+            xcb_key_release_event_t *kr = (xcb_key_release_event_t *)event;
+            DLOG("kr->detail: %d\n", kr->detail);
+        }
         handle_event(type, event);
 
         free(event);
@@ -830,7 +838,7 @@ int main(int argc, char *argv[]) {
     const xcb_query_extension_reply_t *extreply;
     extreply = xcb_get_extension_data(conn, &xcb_xkb_id);
     xkb_supported = extreply->present;
-    if (!extreply->present) {
+    if (!xkb_supported) {
         DLOG("xkb is not present on this server\n");
     } else {
         DLOG("initializing xcb-xkb\n");
