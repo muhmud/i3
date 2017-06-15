@@ -1367,7 +1367,7 @@ static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom)
 void handle_event(int type, xcb_generic_event_t *event) {
     if (type != XCB_MOTION_NOTIFY)
         DLOG("event type %d, xkb_base %d\n", type, xkb_base);
-
+    
     if (randr_base > -1 &&
         type == randr_base + XCB_RANDR_SCREEN_CHANGE_NOTIFY) {
         handle_screen_change(event);
@@ -1402,16 +1402,26 @@ void handle_event(int type, xcb_generic_event_t *event) {
             }
         } else if (state->xkbType == XCB_XKB_STATE_NOTIFY) {
             DLOG("xkb state group = %d\n", state->group);
+
+            /* If the Alt, Windows or any other mod key is released generate an ipc event */
+            if (state->eventType == XCB_KEY_RELEASE) {
+                DLOG("Release keycode: %d\n", state->keycode);
+                char *message;
+                sasprintf(&message, "{ \"change\": \"%d\" }", state->keycode);
+                ipc_send_event("key_release", I3_IPC_EVENT_KEY_RELEASE, message);
+                free(message);
+            }
+            
             if (xkb_current_group == state->group)
                 return;
             xkb_current_group = state->group;
             ungrab_all_keys(conn);
             grab_all_keys(conn);
         }
-
+        
         return;
     }
-
+    
     switch (type) {
         case XCB_KEY_PRESS:
         case XCB_KEY_RELEASE:

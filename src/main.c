@@ -125,10 +125,10 @@ static void xcb_check_cb(EV_P_ ev_check *w, int revents) {
             free(event);
             continue;
         }
-
+        
         /* Strip off the highest bit (set if the event is generated) */
         int type = (event->response_type & 0x7F);
-
+        
         handle_event(type, event);
 
         free(event);
