@@ -1490,14 +1490,17 @@ void cmd_fullscreen(I3_CMD, const char *action, const char *fullscreen_mode) {
 
     HANDLE_EMPTY_MATCH;
 
+    // XXXXX
     TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
         if (strcmp(action, "toggle") == 0) {
-            con_toggle_fullscreen(current->con, mode);
+          con_toggle_fullscreen(current->con, mode, 0);
         } else if (strcmp(action, "enable") == 0) {
             con_enable_fullscreen(current->con, mode);
         } else if (strcmp(action, "disable") == 0) {
-            con_disable_fullscreen(current->con);
+          con_disable_fullscreen(current->con, 0);
+        } else if (strcmp(action, "disable_special") == 0) {
+          con_disable_fullscreen(current->con, 1);
         }
     }
 

@@ -39,7 +39,7 @@ void scratchpad_move(Con *con) {
 
     /* If the current con is in fullscreen mode, we need to disable that,
      *  as a scratchpad window should never be in fullscreen mode */
-    con_disable_fullscreen(con);
+    con_disable_fullscreen(con, 0);
 
     /* 1: Ensure the window or any parent is floating. From now on, we deal
      * with the CT_FLOATING_CON. We use automatic == false because the user
@@ -105,7 +105,7 @@ bool scratchpad_show(Con *con) {
     }
 
     if (fs && fs->type != CT_WORKSPACE) {
-        con_toggle_fullscreen(fs, CF_OUTPUT);
+      con_toggle_fullscreen(fs, CF_OUTPUT, 0);
     }
 
     /* If this was 'scratchpad show' without criteria, we check if there is a

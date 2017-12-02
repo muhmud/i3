@@ -686,7 +686,7 @@ static void handle_net_wm_state_change(Con *con, uint32_t change, uint32_t atom)
             (con->fullscreen_mode != CF_NONE && change == _NET_WM_STATE_REMOVE) ||
             (con->fullscreen_mode == CF_NONE && change == _NET_WM_STATE_ADD)) {
             DLOG("toggling fullscreen\n");
-            con_toggle_fullscreen(con, CF_OUTPUT);
+            con_toggle_fullscreen(con, CF_OUTPUT, 0);
         }
     } else if (atom == A__NET_WM_STATE_DEMANDS_ATTENTION) {
         DLOG("Received a client message to %s _NET_WM_STATE_DEMANDS_ATTENTION.\n", debug_change);
@@ -1447,7 +1447,8 @@ void handle_event(int type, xcb_generic_event_t *event) {
         } else if (state->xkbType == XCB_XKB_STATE_NOTIFY) {
             DLOG("xkb state group = %d\n", state->group);
 
-            /* If the Alt, Windows or any other mod key is released generate an ipc event */
+            // XXXXX
+            /* If the Alt, Windows or any other mod key is pressed or released generate an ipc event */
             if (state->eventType == XCB_KEY_RELEASE) {
                 DLOG("Release keycode: %d\n", state->keycode);
                 char *message;

@@ -1185,7 +1185,8 @@ void con_fix_percent(Con *con) {
  * enabled for the container the user wants to have in fullscreen mode.
  *
  */
-void con_toggle_fullscreen(Con *con, int fullscreen_mode) {
+// XXXXX
+void con_toggle_fullscreen(Con *con, int fullscreen_mode, int special) {
     if (con->type == CT_WORKSPACE) {
         DLOG("You cannot make a workspace fullscreen.\n");
         return;
@@ -1196,7 +1197,7 @@ void con_toggle_fullscreen(Con *con, int fullscreen_mode) {
     if (con->fullscreen_mode == CF_NONE) {
         con_enable_fullscreen(con, fullscreen_mode);
     } else {
-        con_disable_fullscreen(con);
+        con_disable_fullscreen(con, special);
     }
 }
 
@@ -1206,7 +1207,8 @@ void con_toggle_fullscreen(Con *con, int fullscreen_mode) {
  * container’s window, if any.
  *
  */
-static void con_set_fullscreen_mode(Con *con, fullscreen_mode_t fullscreen_mode) {
+// XXXXX
+static void con_set_fullscreen_mode(Con *con, fullscreen_mode_t fullscreen_mode, int special) {
     con->fullscreen_mode = fullscreen_mode;
 
     DLOG("mode now: %d\n", con->fullscreen_mode);
@@ -1224,7 +1226,7 @@ static void con_set_fullscreen_mode(Con *con, fullscreen_mode_t fullscreen_mode)
     if (con->fullscreen_mode != CF_NONE) {
         DLOG("Setting _NET_WM_STATE_FULLSCREEN for con = %p / window = %d.\n", con, con->window->id);
         xcb_add_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_FULLSCREEN);
-    } else {
+    } else if (!special) {
         DLOG("Removing _NET_WM_STATE_FULLSCREEN for con = %p / window = %d.\n", con, con->window->id);
         xcb_remove_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_FULLSCREEN);
     }
@@ -1260,6 +1262,7 @@ void con_enable_fullscreen(Con *con, fullscreen_mode_t fullscreen_mode) {
         return;
     }
 
+    // XXXXX
     Con *con_ws = con_get_workspace(con);
 
     /* Disable any fullscreen container that would conflict the new one. */
@@ -1267,9 +1270,8 @@ void con_enable_fullscreen(Con *con, fullscreen_mode_t fullscreen_mode) {
     if (fullscreen == NULL) {
         fullscreen = con_get_fullscreen_con(con_ws, CF_OUTPUT);
     }
-    if (fullscreen != NULL) {
-        con_disable_fullscreen(fullscreen);
-    }
+    if (fullscreen != NULL)
+      con_disable_fullscreen(fullscreen, 0);
 
     /* Set focus to new fullscreen container. Unless in global fullscreen mode
      * and on another workspace restore focus afterwards.
@@ -1284,7 +1286,7 @@ void con_enable_fullscreen(Con *con, fullscreen_mode_t fullscreen_mode) {
         con_activate(old_focused);
     }
 
-    con_set_fullscreen_mode(con, fullscreen_mode);
+    con_set_fullscreen_mode(con, fullscreen_mode, 0);
 }
 
 /*
@@ -1292,7 +1294,7 @@ void con_enable_fullscreen(Con *con, fullscreen_mode_t fullscreen_mode) {
  * necessary.
  *
  */
-void con_disable_fullscreen(Con *con) {
+void con_disable_fullscreen(Con *con, int special) {
     if (con->type == CT_WORKSPACE) {
         DLOG("You cannot make a workspace fullscreen.\n");
         return;
@@ -1305,7 +1307,7 @@ void con_disable_fullscreen(Con *con) {
         return;
     }
 
-    con_set_fullscreen_mode(con, CF_NONE);
+    con_set_fullscreen_mode(con, CF_NONE, special);
 }
 
 static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fix_coordinates, bool dont_warp, bool ignore_focus, bool fix_percentage) {
@@ -1407,7 +1409,7 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
                                     con_get_fullscreen_con(con, CF_GLOBAL) ||
                                     con_get_fullscreen_con(con, CF_OUTPUT);
     if (con_has_fullscreen && fullscreen != NULL) {
-        con_toggle_fullscreen(fullscreen, CF_OUTPUT);
+        con_toggle_fullscreen(fullscreen, CF_OUTPUT, 0);
         fullscreen = NULL;
     }
 
