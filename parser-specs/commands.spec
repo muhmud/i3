@@ -169,7 +169,7 @@ state KILL:
 # fullscreen disable
 # fullscreen [global]
 state FULLSCREEN:
-  action = 'disable'
+  action = 'disable_special', 'disable'
       -> call cmd_fullscreen($action, "output")
   action = 'enable', 'toggle'
       -> FULLSCREEN_MODE

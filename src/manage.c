@@ -368,7 +368,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
              * presentations to work out of the box. */
             if (output != NULL)
                 con_move_to_output(nc, output);
-            con_toggle_fullscreen(nc, CF_OUTPUT);
+            con_toggle_fullscreen(nc, CF_OUTPUT, 0);
         }
         fs = NULL;
     }
@@ -451,7 +451,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         if (config.popup_during_fullscreen == PDF_LEAVE_FULLSCREEN &&
             fs != NULL) {
             LOG("There is a fullscreen window, leaving fullscreen mode\n");
-            con_toggle_fullscreen(fs, CF_OUTPUT);
+            con_toggle_fullscreen(fs, CF_OUTPUT, 0);
         } else if (config.popup_during_fullscreen == PDF_SMART &&
                    fs != NULL &&
                    fs->window != NULL) {

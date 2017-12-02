@@ -672,8 +672,8 @@ static void handle_client_message(xcb_client_message_event_t *event) {
                  (event->data.data32[0] == _NET_WM_STATE_ADD ||
                   event->data.data32[0] == _NET_WM_STATE_TOGGLE))) {
                 DLOG("toggling fullscreen\n");
-                con_toggle_fullscreen(con, CF_OUTPUT);
-            }
+                con_toggle_fullscreen(con, CF_OUTPUT, 0);
+                }
         } else if (event->data.data32[1] == A__NET_WM_STATE_DEMANDS_ATTENTION) {
             /* Check if the urgent flag must be set or not */
             if (event->data.data32[0] == _NET_WM_STATE_ADD)
@@ -1403,7 +1403,8 @@ void handle_event(int type, xcb_generic_event_t *event) {
         } else if (state->xkbType == XCB_XKB_STATE_NOTIFY) {
             DLOG("xkb state group = %d\n", state->group);
 
-            /* If the Alt, Windows or any other mod key is released generate an ipc event */
+            // XXXXX
+            /* If the Alt, Windows or any other mod key is pressed or released generate an ipc event */
             if (state->eventType == XCB_KEY_RELEASE) {
                 DLOG("Release keycode: %d\n", state->keycode);
                 char *message;

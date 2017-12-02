@@ -22,5 +22,5 @@ bool is_debug_build() {
      *
      * So we check for the offset of the first opening round bracket to
      * determine whether this is a git version or a release version. */
-    return ((strchr(I3_VERSION, '(') - I3_VERSION) > 10);
+  return 0; //((strchr(I3_VERSION, '(') - I3_VERSION) > 10);
 }
