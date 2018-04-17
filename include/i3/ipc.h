@@ -95,3 +95,5 @@ typedef struct i3_ipc_header {
 /** The binding event will be triggered when a key is released */
 #define I3_IPC_EVENT_KEY_RELEASE (I3_IPC_EVENT_MASK | 6)
 
+/** The binding event will be triggered when a key is pressed */
+#define I3_IPC_EVENT_KEY_PRESS (I3_IPC_EVENT_MASK | 7)
