@@ -114,8 +114,11 @@ typedef struct i3_ipc_header {
 /** The binding event will be triggered when a key is released */
 #define I3_IPC_EVENT_KEY_RELEASE (I3_IPC_EVENT_MASK | 6)
 
+/** The binding event will be triggered when a key is pressed */
+#define I3_IPC_EVENT_KEY_PRESS (I3_IPC_EVENT_MASK | 7)
+
 /** The shutdown event will be triggered when the ipc shuts down */
-#define I3_IPC_EVENT_SHUTDOWN (I3_IPC_EVENT_MASK | 7)
+#define I3_IPC_EVENT_SHUTDOWN (I3_IPC_EVENT_MASK | 8)
 
 /** The tick event will be sent upon a tick IPC message */
-#define I3_IPC_EVENT_TICK (I3_IPC_EVENT_MASK | 8)
+#define I3_IPC_EVENT_TICK (I3_IPC_EVENT_MASK | 9)

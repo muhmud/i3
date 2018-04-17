@@ -1455,6 +1455,12 @@ void handle_event(int type, xcb_generic_event_t *event) {
                 sasprintf(&message, "{ \"change\": \"%d\" }", state->keycode);
                 ipc_send_event("key_release", I3_IPC_EVENT_KEY_RELEASE, message);
                 free(message);
+            } else if (state->eventType == XCB_KEY_PRESS) {
+                DLOG("Keypress keycode: %d\n", state->keycode);
+                char *message;
+                sasprintf(&message, "{ \"change\": \"%d\" }", state->keycode);
+                ipc_send_event("key_press", I3_IPC_EVENT_KEY_PRESS, message);
+                free(message);
             }
 
             if (xkb_current_group == state->group)
