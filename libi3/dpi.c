@@ -24,6 +24,7 @@ static long init_dpi_fallback(void) {
  */
 void init_dpi(void) {
     xcb_xrm_database_t *database = NULL;
+    char *resource = NULL;
 
     if (conn == NULL) {
         goto init_dpi_end;
@@ -35,7 +36,6 @@ void init_dpi(void) {
         goto init_dpi_end;
     }
 
-    char *resource;
     xcb_xrm_resource_get_string(database, "Xft.dpi", NULL, &resource);
     if (resource == NULL) {
         DLOG("Resource Xft.dpi not specified, skipping.\n");
@@ -43,16 +43,21 @@ void init_dpi(void) {
     }
 
     char *endptr;
-    dpi = strtol(resource, &endptr, 10);
-    if (dpi == LONG_MAX || dpi == LONG_MIN || dpi < 0 || *endptr != '\0' || endptr == resource) {
+    double in_dpi = strtod(resource, &endptr);
+    if (in_dpi == HUGE_VAL || dpi < 0 || *endptr != '\0' || endptr == resource) {
         ELOG("Xft.dpi = %s is an invalid number and couldn't be parsed.\n", resource);
         dpi = 0;
         goto init_dpi_end;
     }
+    dpi = (long)round(in_dpi);
 
     DLOG("Found Xft.dpi = %ld.\n", dpi);
 
 init_dpi_end:
+    if (resource != NULL) {
+        free(resource);
+    }
+
     if (database != NULL) {
         xcb_xrm_database_free(database);
     }
@@ -62,6 +67,14 @@ init_dpi_end:
         dpi = init_dpi_fallback();
         DLOG("Using dpi = %ld\n", dpi);
     }
+}
+
+/*
+ * This function returns the value of the DPI setting.
+ *
+ */
+long get_dpi_value(void) {
+    return dpi;
 }
 
 /*

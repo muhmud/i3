@@ -41,10 +41,10 @@ Apart from this document, you should also have a look at:
    http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
 2. The latest Perl documentation of the "i3test" (general testcase setup) and
    "i3test::Test" (additional test instructions) modules:
-   http://build.i3wm.org/docs/lib-i3test.html respectively
-   http://build.i3wm.org/docs/lib-i3test-test.html
+   https://build.i3wm.org/docs/lib-i3test.html respectively
+   https://build.i3wm.org/docs/lib-i3test-test.html
 3. The latest documentation on i3’s IPC interface:
-   http://build.i3wm.org/docs/ipc.html
+   https://build.i3wm.org/docs/ipc.html
 
 == Implementation
 
@@ -75,12 +75,15 @@ used to install the testsuite. Many users prefer to use the more modern
 +cpanminus+ instead, though (because it asks no questions and just works):
 
 The tests additionally require +Xephyr(1)+ to run a nested X server. Install
-+xserver-xephyr+ on Debian or +xorg-xserver-xephyr+ on Arch Linux.
++xserver-xephyr+ on Debian or +xorg-server-xephyr+ on Arch Linux.
 
 .Installing testsuite dependencies using cpanminus (preferred)
 --------------------------------------------------------------------------------
 $ cd ~/i3/testcases
 $ sudo apt-get install cpanminus
+$ sudo cpanm .
+$ cd ~/i3/AnyEvent-I3
+$ sudo cpanm Module::Install
 $ sudo cpanm .
 --------------------------------------------------------------------------------
 
@@ -90,10 +93,13 @@ If you don’t want to use cpanminus for some reason, the same works with cpan:
 --------------------------------------------------------------------------------
 $ cd ~/i3/testcases
 $ sudo cpan .
+$ cd ~/i3/AnyEvent-I3
+$ sudo cpan Module::Install
+$ sudo cpan .
 --------------------------------------------------------------------------------
 
 In case you don’t have root permissions, you can also install into your home
-directory, see http://michael.stapelberg.de/cpan/
+directory, see https://michael.stapelberg.de/cpan/
 
 === Mechanisms
 
@@ -107,14 +113,23 @@ containing the appropriate i3 logfile for each testcase. The latest folder can
 always be found under the symlink +latest/+. Unless told differently, it will
 run the tests on a separate X server instance (using Xephyr).
 
-Xephyr will open a window where you can inspect the running test. You can run
-the tests without an X session with Xvfb, such as with +xvfb-run
-./complete-run+. This will also speed up the tests significantly especially on
-machines without a powerful video card.
+Xephyr will open a window where you can inspect the running test. By default,
+tests are run under Xvfb.
 
-.Example invocation of complete-run.pl+
+.Example invocation of +complete-run.pl+
 ---------------------------------------
-$ cd ~/i3/testcases
+$ cd ~/i3
+
+$ autoreconf -fi
+
+$ mkdir -p build && cd build
+
+$ ../configure
+
+$ make -j8
+# output omitted because it is very long
+
+$ cd testcases
 
 $ ./complete-run.pl
 # output omitted because it is very long
@@ -160,6 +175,41 @@ $ ./complete-run.pl --parallel=1 --keep-xserver-output
 This will show the output of Xephyr, which is the X server implementation we
 use for testing.
 
+===== make command: +make check+
+Make check runs the i3 testsuite.
+You can still use ./testcases/complete-run.pl to get the interactive progress output.
+
+.Example invocation of +make check+
+---------------------------------------
+$ cd ~/i3
+
+$ autoreconf -fi
+
+$ mkdir -p build && cd build
+
+$ ../configure
+
+$ make -j8
+# output omitted because it is very long
+
+$ make check
+# output omitted because it is very long
+PASS: testcases/complete-run.pl
+============================================================================
+Testsuite summary for i3 4.13
+============================================================================
+# TOTAL: 1
+# PASS:  1
+# SKIP:  0
+# XFAIL: 0
+# FAIL:  0
+# XPASS: 0
+# ERROR: 0
+============================================================================
+
+$ less test-suite.log
+----------------------------------------
+
 ==== Coverage testing
 
 Coverage testing is possible with +lcov+, the front-end for GCC's coverage
@@ -188,7 +238,7 @@ interface which i3 provides. It is used for the startup process of i3, for
 terminating it cleanly and (most importantly) for modifying and getting the
 current state (layout tree).
 
-See [http://i3wm.org/docs/ipc.html] for documentation on the IPC interface.
+See [https://i3wm.org/docs/ipc.html] for documentation on the IPC interface.
 
 ==== X11::XCB
 

@@ -1,9 +1,9 @@
 #!/bin/zsh
 # This script is used to prepare a new release of i3.
 
-export RELEASE_VERSION="4.12"
-export PREVIOUS_VERSION="4.11"
-export RELEASE_BRANCH="next"
+export RELEASE_VERSION="4.14.1"
+export PREVIOUS_VERSION="4.14"
+export RELEASE_BRANCH="master"
 
 if [ ! -e "../i3.github.io" ]
 then
@@ -232,7 +232,12 @@ echo ""
 echo "  cd ${TMPDIR}"
 echo "  sendmail -t < email.txt"
 echo ""
+echo "Update milestones on GitHub (only for new major versions):"
+echo "  Set due date of ${RELEASE_VERSION} to $(date +'%Y-%m-%d') and close the milestone"
+echo "  Create milestone for the next major version with unset due date"
+echo ""
 echo "Announce on:"
 echo "  twitter"
 echo "  google+"
 echo "  #i3 topic"
+echo "  reddit /r/i3wm"

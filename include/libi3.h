@@ -24,6 +24,16 @@
 
 #define DEFAULT_DIR_MODE (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)
 
+/** Mouse buttons */
+#define XCB_BUTTON_CLICK_LEFT XCB_BUTTON_INDEX_1
+#define XCB_BUTTON_CLICK_MIDDLE XCB_BUTTON_INDEX_2
+#define XCB_BUTTON_CLICK_RIGHT XCB_BUTTON_INDEX_3
+#define XCB_BUTTON_SCROLL_UP XCB_BUTTON_INDEX_4
+#define XCB_BUTTON_SCROLL_DOWN XCB_BUTTON_INDEX_5
+/* xcb doesn't define constants for these. */
+#define XCB_BUTTON_SCROLL_LEFT 6
+#define XCB_BUTTON_SCROLL_RIGHT 7
+
 /**
  * XCB connection and root screen
  *
@@ -460,7 +470,7 @@ char *get_process_filename(const char *prefix);
 /**
  * This function returns the absolute path to the executable it is running in.
  *
- * The implementation follows http://stackoverflow.com/a/933996/712014
+ * The implementation follows https://stackoverflow.com/a/933996/712014
  *
  * Returned value must be freed by the caller.
  */
@@ -472,6 +482,12 @@ char *get_exe_path(const char *argv0);
  * guessing the correct value otherwise.
  */
 void init_dpi(void);
+
+/**
+ * This function returns the value of the DPI setting.
+ *
+ */
+long get_dpi_value(void);
 
 /**
  * Convert a logical amount of pixels (e.g. 2 pixels on a “standard” 96 DPI
@@ -591,17 +607,17 @@ void draw_util_text(i3String *text, surface_t *surface, color_t fg_color, color_
  * surface as well as restoring the cairo state.
  *
  */
-void draw_util_rectangle(xcb_connection_t *conn, surface_t *surface, color_t color, double x, double y, double w, double h);
+void draw_util_rectangle(surface_t *surface, color_t color, double x, double y, double w, double h);
 
 /**
  * Clears a surface with the given color.
  *
  */
-void draw_util_clear_surface(xcb_connection_t *conn, surface_t *surface, color_t color);
+void draw_util_clear_surface(surface_t *surface, color_t color);
 
 /**
  * Copies a surface onto another surface.
  *
  */
-void draw_util_copy_surface(xcb_connection_t *conn, surface_t *src, surface_t *dest, double src_x, double src_y,
+void draw_util_copy_surface(surface_t *src, surface_t *dest, double src_x, double src_y,
                             double dest_x, double dest_y, double width, double height);

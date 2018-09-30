@@ -83,7 +83,6 @@ int mod_pressed = 0;
 
 /* Event watchers, to interact with the user */
 ev_prepare *xcb_prep;
-ev_check *xcb_chk;
 ev_io *xcb_io;
 ev_io *xkb_io;
 
@@ -181,7 +180,7 @@ static void draw_separator(i3_output *output, uint32_t x, struct status_block *b
     uint32_t center_x = x - sep_offset;
     if (config.separator_symbol == NULL) {
         /* Draw a classic one pixel, vertical separator. */
-        draw_util_rectangle(xcb_connection, &output->statusline_buffer, sep_fg,
+        draw_util_rectangle(&output->statusline_buffer, sep_fg,
                             center_x,
                             logical_px(sep_voff_px),
                             logical_px(1),
@@ -250,7 +249,7 @@ void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_color
     struct status_block *block;
 
     color_t bar_color = (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg);
-    draw_util_clear_surface(xcb_connection, &output->statusline_buffer, bar_color);
+    draw_util_clear_surface(&output->statusline_buffer, bar_color);
 
     /* Use unsigned integer wraparound to clip off the left side.
      * For example, if clip_left is 75, then x will start at the very large
@@ -301,13 +300,13 @@ void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_color
             }
 
             /* Draw the border. */
-            draw_util_rectangle(xcb_connection, &output->statusline_buffer, border_color,
+            draw_util_rectangle(&output->statusline_buffer, border_color,
                                 x, logical_px(1),
                                 full_render_width,
                                 bar_height - logical_px(2));
 
             /* Draw the background. */
-            draw_util_rectangle(xcb_connection, &output->statusline_buffer, bg_color,
+            draw_util_rectangle(&output->statusline_buffer, bg_color,
                                 x + border_width,
                                 logical_px(1) + border_width,
                                 full_render_width - 2 * border_width,
@@ -440,6 +439,18 @@ void init_colors(const struct xcb_color_strings_t *new_colors) {
     xcb_flush(xcb_connection);
 }
 
+static bool execute_custom_command(xcb_keycode_t input_code, bool event_is_release) {
+    binding_t *binding;
+    TAILQ_FOREACH(binding, &(config.bindings), bindings) {
+        if ((binding->input_code != input_code) || (binding->release != event_is_release))
+            continue;
+
+        i3_send_msg(I3_IPC_MESSAGE_TYPE_RUN_COMMAND, binding->command);
+        return true;
+    }
+    return false;
+}
+
 /*
  * Handle a button press event (i.e. a mouse click on one of our bars).
  * We determine, whether the click occurred on a workspace button or if the scroll-
@@ -461,10 +472,16 @@ void handle_button(xcb_button_press_event_t *event) {
         return;
     }
 
-    int32_t x = event->event_x >= 0 ? event->event_x : 0;
-
     DLOG("Got button %d\n", event->detail);
 
+    /* During button release events, only check for custom commands. */
+    const bool event_is_release = (event->response_type & ~0x80) == XCB_BUTTON_RELEASE;
+    if (event_is_release) {
+        execute_custom_command(event->detail, event_is_release);
+        return;
+    }
+
+    int32_t x = event->event_x >= 0 ? event->event_x : 0;
     int workspace_width = 0;
     i3_ws *cur_ws = NULL, *clicked_ws = NULL, *ws_walk;
 
@@ -506,7 +523,8 @@ void handle_button(xcb_button_press_event_t *event) {
                 block_x += render->width + render->x_offset + render->x_append + get_sep_offset(block) + sep_offset_remainder;
 
                 if (statusline_x <= block_x && statusline_x >= last_block_x) {
-                    send_block_clicked(event->detail, block->name, block->instance, event->root_x, event->root_y);
+                    send_block_clicked(event->detail, block->name, block->instance,
+                                       event->root_x, event->root_y, statusline_x - last_block_x, event->event_y, block_x - last_block_x, bar_height);
                     return;
                 }
 
@@ -517,12 +535,7 @@ void handle_button(xcb_button_press_event_t *event) {
 
     /* If a custom command was specified for this mouse button, it overrides
      * the default behavior. */
-    binding_t *binding;
-    TAILQ_FOREACH(binding, &(config.bindings), bindings) {
-        if (binding->input_code != event->detail)
-            continue;
-
-        i3_send_msg(I3_IPC_MESSAGE_TYPE_COMMAND, binding->command);
+    if (execute_custom_command(event->detail, event_is_release)) {
         return;
     }
 
@@ -531,7 +544,8 @@ void handle_button(xcb_button_press_event_t *event) {
         return;
     }
     switch (event->detail) {
-        case 4:
+        case XCB_BUTTON_SCROLL_UP:
+        case XCB_BUTTON_SCROLL_LEFT:
             /* Mouse wheel up. We select the previous ws, if any.
              * If there is no more workspace, don’t even send the workspace
              * command, otherwise (with workspace auto_back_and_forth) we’d end
@@ -541,7 +555,8 @@ void handle_button(xcb_button_press_event_t *event) {
 
             cur_ws = TAILQ_PREV(cur_ws, ws_head, tailq);
             break;
-        case 5:
+        case XCB_BUTTON_SCROLL_DOWN:
+        case XCB_BUTTON_SCROLL_RIGHT:
             /* Mouse wheel down. We select the next ws, if any.
              * If there is no more workspace, don’t even send the workspace
              * command, otherwise (with workspace auto_back_and_forth) we’d end
@@ -601,7 +616,7 @@ void handle_button(xcb_button_press_event_t *event) {
         buffer[outpos] = utf8_name[inpos];
     }
     buffer[outpos] = '"';
-    i3_send_msg(I3_IPC_MESSAGE_TYPE_COMMAND, buffer);
+    i3_send_msg(I3_IPC_MESSAGE_TYPE_RUN_COMMAND, buffer);
     free(buffer);
 }
 
@@ -676,8 +691,26 @@ static void configure_trayclients(void) {
  *
  */
 static void handle_client_message(xcb_client_message_event_t *event) {
-    if (event->type == atoms[_NET_SYSTEM_TRAY_OPCODE] &&
-        event->format == 32) {
+    if (event->type == atoms[I3_SYNC]) {
+        xcb_window_t window = event->data.data32[0];
+        uint32_t rnd = event->data.data32[1];
+        DLOG("[i3 sync protocol] Forwarding random value %d, X11 window 0x%08x to i3\n", rnd, window);
+
+        void *reply = scalloc(32, 1);
+        xcb_client_message_event_t *ev = reply;
+
+        ev->response_type = XCB_CLIENT_MESSAGE;
+        ev->window = window;
+        ev->type = atoms[I3_SYNC];
+        ev->format = 32;
+        ev->data.data32[0] = window;
+        ev->data.data32[1] = rnd;
+
+        xcb_send_event(conn, false, xcb_root, XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT, (char *)ev);
+        xcb_flush(conn);
+        free(reply);
+    } else if (event->type == atoms[_NET_SYSTEM_TRAY_OPCODE] &&
+               event->format == 32) {
         DLOG("_NET_SYSTEM_TRAY_OPCODE received\n");
         /* event->data.data32[0] is the timestamp */
         uint32_t op = event->data.data32[1];
@@ -857,7 +890,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
  * client to finish the protocol. After this event is received, there is no
  * further interaction with the tray client.
  *
- * See: http://standards.freedesktop.org/xembed-spec/xembed-spec-latest.html
+ * See: https://standards.freedesktop.org/xembed-spec/xembed-spec-latest.html
  *
  */
 static void handle_destroy_notify(xcb_destroy_notify_event_t *event) {
@@ -870,11 +903,13 @@ static void handle_destroy_notify(xcb_destroy_notify_event_t *event) {
         DLOG("checking output %s\n", walk->name);
         trayclient *trayclient;
         TAILQ_FOREACH(trayclient, walk->trayclients, tailq) {
-            if (trayclient->win != event->window)
+            if (trayclient->win != event->window) {
                 continue;
+            }
 
             DLOG("Removing tray client with window ID %08x\n", event->window);
             TAILQ_REMOVE(walk->trayclients, trayclient, tailq);
+            FREE(trayclient);
 
             /* Trigger an update, we now have more space for the statusline */
             configure_trayclients();
@@ -1053,21 +1088,11 @@ static void handle_resize_request(xcb_resize_request_event_t *event) {
 }
 
 /*
- * This function is called immediately before the main loop locks. We flush xcb
- * then (and only then)
+ * This function is called immediately before the main loop locks. We check for
+ * events from X11, handle them, then flush our outgoing queue.
  *
  */
 void xcb_prep_cb(struct ev_loop *loop, ev_prepare *watcher, int revents) {
-    xcb_flush(xcb_connection);
-}
-
-/*
- * This function is called immediately after the main loop locks, so when one
- * of the watchers registered an event.
- * We check whether an X-Event arrived and handle it.
- *
- */
-void xcb_chk_cb(struct ev_loop *loop, ev_check *watcher, int revents) {
     xcb_generic_event_t *event;
 
     if (xcb_connection_has_error(xcb_connection)) {
@@ -1147,9 +1172,13 @@ void xcb_chk_cb(struct ev_loop *loop, ev_check *watcher, int revents) {
                 handle_visibility_notify((xcb_visibility_notify_event_t *)event);
                 break;
             case XCB_EXPOSE:
-                /* Expose-events happen, when the window needs to be redrawn */
-                redraw_bars();
+                if (((xcb_expose_event_t *)event)->count == 0) {
+                    /* Expose-events happen, when the window needs to be redrawn */
+                    redraw_bars();
+                }
+
                 break;
+            case XCB_BUTTON_RELEASE:
             case XCB_BUTTON_PRESS:
                 /* Button press events are mouse buttons clicked on one of our bars */
                 handle_button((xcb_button_press_event_t *)event);
@@ -1177,6 +1206,7 @@ void xcb_chk_cb(struct ev_loop *loop, ev_check *watcher, int revents) {
             case XCB_CONFIGURE_REQUEST:
                 /* ConfigureRequest, sent by a tray child */
                 handle_configure_request((xcb_configure_request_event_t *)event);
+                break;
             case XCB_RESIZE_REQUEST:
                 /* ResizeRequest sent by a tray child using override_redirect. */
                 handle_resize_request((xcb_resize_request_event_t *)event);
@@ -1184,6 +1214,8 @@ void xcb_chk_cb(struct ev_loop *loop, ev_check *watcher, int revents) {
         }
         free(event);
     }
+
+    xcb_flush(xcb_connection);
 }
 
 /*
@@ -1241,15 +1273,12 @@ char *init_xcb_early() {
     /* The various watchers to communicate with xcb */
     xcb_io = smalloc(sizeof(ev_io));
     xcb_prep = smalloc(sizeof(ev_prepare));
-    xcb_chk = smalloc(sizeof(ev_check));
 
     ev_io_init(xcb_io, &xcb_io_cb, xcb_get_file_descriptor(xcb_connection), EV_READ);
     ev_prepare_init(xcb_prep, &xcb_prep_cb);
-    ev_check_init(xcb_chk, &xcb_chk_cb);
 
     ev_io_start(main_loop, xcb_io);
     ev_prepare_start(main_loop, xcb_prep);
-    ev_check_start(main_loop, xcb_chk);
 
     /* Now we get the atoms and save them in a nice data structure */
     get_atoms();
@@ -1485,16 +1514,7 @@ void init_tray_colors(void) {
  *
  */
 void clean_xcb(void) {
-    i3_output *o_walk;
-    free_workspaces();
-    SLIST_FOREACH(o_walk, outputs, slist) {
-        destroy_window(o_walk);
-        FREE(o_walk->trayclients);
-        FREE(o_walk->workspaces);
-        FREE(o_walk->name);
-    }
-    FREE_SLIST(outputs, i3_output);
-    FREE(outputs);
+    free_outputs();
 
     free_font();
 
@@ -1503,11 +1523,9 @@ void clean_xcb(void) {
     xcb_aux_sync(xcb_connection);
     xcb_disconnect(xcb_connection);
 
-    ev_check_stop(main_loop, xcb_chk);
     ev_prepare_stop(main_loop, xcb_prep);
     ev_io_stop(main_loop, xcb_io);
 
-    FREE(xcb_chk);
     FREE(xcb_prep);
     FREE(xcb_io);
 }
@@ -1558,6 +1576,7 @@ void kick_tray_clients(i3_output *output) {
         /* We remove the trayclient right here. We might receive an UnmapNotify
          * event afterwards, but better safe than sorry. */
         TAILQ_REMOVE(output->trayclients, trayclient, tailq);
+        FREE(trayclient);
     }
 
     /* Fake a DestroyNotify so that Qt re-adds tray icons.
@@ -1674,7 +1693,8 @@ void reconfig_windows(bool redraw_bars) {
              * */
             values[3] = XCB_EVENT_MASK_EXPOSURE |
                         XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
-                        XCB_EVENT_MASK_BUTTON_PRESS;
+                        XCB_EVENT_MASK_BUTTON_PRESS |
+                        XCB_EVENT_MASK_BUTTON_RELEASE;
             if (config.hide_on_modifier == M_DOCK) {
                 /* If the bar is normally visible, catch visibility change events to suspend
                  * the status process when the bar is obscured by full-screened windows.  */
@@ -1943,8 +1963,7 @@ void draw_bars(bool unhide) {
         bool use_focus_colors = output_has_focus(outputs_walk);
 
         /* First things first: clear the backbuffer */
-        draw_util_clear_surface(xcb_connection, &(outputs_walk->buffer),
-                                (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg));
+        draw_util_clear_surface(&(outputs_walk->buffer), (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg));
 
         if (!config.disable_ws) {
             i3_ws *ws_walk;
@@ -1974,14 +1993,14 @@ void draw_bars(bool unhide) {
                 }
 
                 /* Draw the border of the button. */
-                draw_util_rectangle(xcb_connection, &(outputs_walk->buffer), border_color,
+                draw_util_rectangle(&(outputs_walk->buffer), border_color,
                                     workspace_width,
                                     logical_px(1),
                                     ws_walk->name_width + 2 * logical_px(ws_hoff_px) + 2 * logical_px(1),
                                     font.height + 2 * logical_px(ws_voff_px) - 2 * logical_px(1));
 
                 /* Draw the inside of the button. */
-                draw_util_rectangle(xcb_connection, &(outputs_walk->buffer), bg_color,
+                draw_util_rectangle(&(outputs_walk->buffer), bg_color,
                                     workspace_width + logical_px(1),
                                     2 * logical_px(1),
                                     ws_walk->name_width + 2 * logical_px(ws_hoff_px),
@@ -2004,13 +2023,13 @@ void draw_bars(bool unhide) {
             color_t fg_color = colors.binding_mode_fg;
             color_t bg_color = colors.binding_mode_bg;
 
-            draw_util_rectangle(xcb_connection, &(outputs_walk->buffer), colors.binding_mode_border,
+            draw_util_rectangle(&(outputs_walk->buffer), colors.binding_mode_border,
                                 workspace_width,
                                 logical_px(1),
                                 binding.width + 2 * logical_px(ws_hoff_px) + 2 * logical_px(1),
                                 font.height + 2 * logical_px(ws_voff_px) - 2 * logical_px(1));
 
-            draw_util_rectangle(xcb_connection, &(outputs_walk->buffer), bg_color,
+            draw_util_rectangle(&(outputs_walk->buffer), bg_color,
                                 workspace_width + logical_px(1),
                                 2 * logical_px(1),
                                 binding.width + 2 * logical_px(ws_hoff_px),
@@ -2046,7 +2065,7 @@ void draw_bars(bool unhide) {
             int x_dest = outputs_walk->rect.w - tray_width - logical_px(sb_hoff_px) - visible_statusline_width;
 
             draw_statusline(outputs_walk, clip_left, use_focus_colors, use_short_text);
-            draw_util_copy_surface(xcb_connection, &outputs_walk->statusline_buffer, &outputs_walk->buffer, 0, 0,
+            draw_util_copy_surface(&outputs_walk->statusline_buffer, &outputs_walk->buffer, 0, 0,
                                    x_dest, 0, visible_statusline_width, (int16_t)bar_height);
 
             outputs_walk->statusline_width = statusline_width;
@@ -2077,7 +2096,7 @@ void redraw_bars(void) {
             continue;
         }
 
-        draw_util_copy_surface(xcb_connection, &(outputs_walk->buffer), &(outputs_walk->bar), 0, 0,
+        draw_util_copy_surface(&(outputs_walk->buffer), &(outputs_walk->bar), 0, 0,
                                0, 0, outputs_walk->rect.w, outputs_walk->rect.h);
         xcb_flush(xcb_connection);
     }

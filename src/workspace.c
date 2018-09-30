@@ -188,7 +188,7 @@ Con *create_workspace_on_output(Output *output, Con *content) {
         struct Workspace_Assignment *assignment;
         TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
             if (strcmp(assignment->name, target_name) != 0 ||
-                strcmp(assignment->output, output->name) == 0)
+                strcmp(assignment->output, output_primary_name(output)) == 0)
                 continue;
 
             assigned = true;
@@ -458,6 +458,11 @@ static void _workspace_show(Con *workspace) {
             ipc_send_event("workspace", I3_IPC_EVENT_WORKSPACE, (const char *)payload);
 
             y(free);
+
+            /* Avoid calling output_push_sticky_windows later with a freed container. */
+            if (old == old_focus) {
+                old_focus = NULL;
+            }
 
             ewmh_update_number_of_desktops();
             ewmh_update_desktop_names();
@@ -810,15 +815,18 @@ void ws_force_orientation(Con *ws, orientation_t orientation) {
     /* 2: copy layout from workspace */
     split->layout = ws->layout;
 
-    Con *old_focused = TAILQ_FIRST(&(ws->focus_head));
-
     /* 3: move the existing cons of this workspace below the new con */
+    Con **focus_order = get_focus_order(ws);
+
     DLOG("Moving cons\n");
     while (!TAILQ_EMPTY(&(ws->nodes_head))) {
         Con *child = TAILQ_FIRST(&(ws->nodes_head));
         con_detach(child);
         con_attach(child, split, true);
     }
+
+    set_focus_order(split, focus_order);
+    free(focus_order);
 
     /* 4: switch workspace layout */
     ws->layout = (orientation == HORIZ) ? L_SPLITH : L_SPLITV;
@@ -830,9 +838,6 @@ void ws_force_orientation(Con *ws, orientation_t orientation) {
 
     /* 6: fix the percentages */
     con_fix_percent(ws);
-
-    if (old_focused)
-        con_focus(old_focused);
 }
 
 /*
@@ -887,15 +892,19 @@ Con *workspace_encapsulate(Con *ws) {
     new->parent = ws;
     new->layout = ws->layout;
 
+    Con **focus_order = get_focus_order(ws);
+
     DLOG("Moving children of workspace %p / %s into container %p\n",
          ws, ws->name, new);
-
     Con *child;
     while (!TAILQ_EMPTY(&(ws->nodes_head))) {
         child = TAILQ_FIRST(&(ws->nodes_head));
         con_detach(child);
         con_attach(child, new, true);
     }
+
+    set_focus_order(new, focus_order);
+    free(focus_order);
 
     con_attach(new, ws, true);
 
@@ -935,7 +944,7 @@ bool workspace_move_to_output(Con *ws, const char *name) {
         bool used_assignment = false;
         struct Workspace_Assignment *assignment;
         TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
-            if (assignment->output == NULL || strcmp(assignment->output, current_output->name) != 0)
+            if (assignment->output == NULL || strcmp(assignment->output, output_primary_name(current_output)) != 0)
                 continue;
 
             /* check if this workspace is already attached to the tree */

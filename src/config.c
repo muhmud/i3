@@ -13,6 +13,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 char *current_configpath = NULL;
+char *current_config = NULL;
 Config config;
 struct modes_head modes;
 struct barconfig_head barconfigs = TAILQ_HEAD_INITIALIZER(barconfigs);
@@ -225,6 +226,8 @@ void load_configuration(xcb_connection_t *conn, const char *override_configpath,
     /* Set default urgency reset delay to 500ms */
     if (config.workspace_urgency_timer == 0)
         config.workspace_urgency_timer = 0.5;
+
+    config.focus_wrapping = FOCUS_WRAPPING_ON;
 
     parse_configuration(override_configpath, true);
 

@@ -21,6 +21,7 @@
 typedef struct Config Config;
 typedef struct Barconfig Barconfig;
 extern char *current_configpath;
+extern char *current_config;
 extern Config config;
 extern SLIST_HEAD(modes_head, Mode) modes;
 extern TAILQ_HEAD(barconfig_head, Barconfig) barconfigs;
@@ -68,7 +69,8 @@ struct Variable {
     char *value;
     char *next_match;
 
-    SLIST_ENTRY(Variable) variables;
+    SLIST_ENTRY(Variable)
+    variables;
 };
 
 /**
@@ -82,7 +84,8 @@ struct Mode {
     bool pango_markup;
     struct bindings_head *bindings;
 
-    SLIST_ENTRY(Mode) modes;
+    SLIST_ENTRY(Mode)
+    modes;
 };
 
 /**
@@ -134,15 +137,24 @@ struct Config {
      * comes with i3. Thus, you can turn it off entirely. */
     bool disable_workspace_bar;
 
-    /** Think of the following layout: Horizontal workspace with a tabbed
-     * con on the left of the screen and a terminal on the right of the
-     * screen. You are in the second container in the tabbed container and
-     * focus to the right. By default, i3 will set focus to the terminal on
-     * the right. If you are in the first container in the tabbed container
-     * however, focusing to the left will wrap. This option forces i3 to
-     * always wrap, which will result in you having to use "focus parent"
-     * more often. */
-    bool force_focus_wrapping;
+    /** When focus wrapping is enabled (the default), attempting to
+     * move focus past the edge of the screen (in other words, in a
+     * direction in which there are no more containers to focus) will
+     * cause the focus to wrap to the opposite edge of the current
+     * container. When it is disabled, nothing happens; the current
+     * focus is preserved.
+     *
+     * Additionally, focus wrapping may be forced. Think of the
+     * following layout: Horizontal workspace with a tabbed con on the
+     * left of the screen and a terminal on the right of the
+     * screen. You are in the second container in the tabbed container
+     * and focus to the right. By default, i3 will set focus to the
+     * terminal on the right. If you are in the first container in the
+     * tabbed container however, focusing to the left will
+     * wrap. Setting focus_wrapping to FOCUS_WRAPPING_FORCE forces i3
+     * to always wrap, which will result in you having to use "focus
+     * parent" more often. */
+    focus_wrapping_t focus_wrapping;
 
     /** By default, use the RandR API for multi-monitor setups.
      * Unfortunately, the nVidia binary graphics driver doesn't support
@@ -153,6 +165,9 @@ struct Config {
      * reconfiguration is not possible). On startup, the list of screens
      * is fetched once and never updated. */
     bool force_xinerama;
+
+    /** Don’t use RandR 1.5 for querying outputs. */
+    bool disable_randr15;
 
     /** Overwrites output detection (for testing), see src/fake_outputs.c */
     char *fake_outputs;
@@ -253,7 +268,8 @@ struct Barconfig {
     /* List of outputs on which the tray is allowed to be shown, in order.
      * The special value "none" disables it (per default, it will be shown) and
      * the special value "primary" enabled it on the primary output. */
-    TAILQ_HEAD(tray_outputs_head, tray_output_t) tray_outputs;
+    TAILQ_HEAD(tray_outputs_head, tray_output_t)
+    tray_outputs;
 
     /* Padding around the tray icons. */
     int tray_padding;
@@ -284,7 +300,8 @@ struct Barconfig {
         M_MOD5 = 7
     } modifier;
 
-    TAILQ_HEAD(bar_bindings_head, Barbinding) bar_bindings;
+    TAILQ_HEAD(bar_bindings_head, Barbinding)
+    bar_bindings;
 
     /** Bar position (bottom by default). */
     enum { P_BOTTOM = 0,
@@ -351,7 +368,8 @@ struct Barconfig {
         char *binding_mode_text;
     } colors;
 
-    TAILQ_ENTRY(Barconfig) configs;
+    TAILQ_ENTRY(Barconfig)
+    configs;
 };
 
 /**
@@ -366,13 +384,18 @@ struct Barbinding {
     /** The command which is to be executed for this button. */
     char *command;
 
-    TAILQ_ENTRY(Barbinding) bindings;
+    /** If true, the command will be executed after the button is released. */
+    bool release;
+
+    TAILQ_ENTRY(Barbinding)
+    bindings;
 };
 
 struct tray_output_t {
     char *output;
 
-    TAILQ_ENTRY(tray_output_t) tray_outputs;
+    TAILQ_ENTRY(tray_output_t)
+    tray_outputs;
 };
 
 /**

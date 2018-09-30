@@ -1,3 +1,21 @@
+i3-wm (4.15-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sat, 10 Mar 2018 17:27:26 +0100
+
+i3-wm (4.14.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sun, 24 Sep 2017 19:21:15 +0200
+
+i3-wm (4.14-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Mon, 04 Sep 2017 07:53:16 +0200
+
 i3-wm (4.13-1) unstable; urgency=medium
 
   * New upstream release.
@@ -302,7 +320,7 @@ i3-wm (4.0.2-1) unstable; urgency=low
   * Bugfix: Use correct format string in load_layout (fixes crash in restart)
   * Bugfix: Fix border rendering (border lines were "cutting" through)
   * Bugfix: Raise floating windows immediately when dragging/resizing
-  * Bugfix: Make focus switching work accross outputs again
+  * Bugfix: Make focus switching work across outputs again
   * Bugfix: migration-script: handle resize top/bottom correctly
   * Bugfix: Fix focus issue when moving containers to workspaces
   * Bugfix: Warp cursor when changing outputs again

@@ -106,24 +106,25 @@ __attribute__((format(printf, 1, 2))) static void set_statusline_error(const cha
     va_list args;
     va_start(args, format);
     if (vasprintf(&message, format, args) == -1) {
-        return;
+        goto finish;
     }
 
     struct status_block *err_block = scalloc(1, sizeof(struct status_block));
     err_block->full_text = i3string_from_utf8("Error: ");
     err_block->name = sstrdup("error");
-    err_block->color = sstrdup("red");
+    err_block->color = sstrdup("#ff0000");
     err_block->no_separator = true;
 
     struct status_block *message_block = scalloc(1, sizeof(struct status_block));
     message_block->full_text = i3string_from_utf8(message);
     message_block->name = sstrdup("error_message");
-    message_block->color = sstrdup("red");
+    message_block->color = sstrdup("#ff0000");
     message_block->no_separator = true;
 
     TAILQ_INSERT_HEAD(&statusline_head, err_block, blocks);
     TAILQ_INSERT_TAIL(&statusline_head, message_block, blocks);
 
+finish:
     FREE(message);
     va_end(args);
 }
@@ -333,10 +334,12 @@ static unsigned char *get_buffer(ev_io *watcher, int *ret_buffer_len) {
                 break;
             }
             ELOG("read() failed!: %s\n", strerror(errno));
+            FREE(buffer);
             exit(EXIT_FAILURE);
         }
         if (n == 0) {
             ELOG("stdin: received EOF\n");
+            FREE(buffer);
             *ret_buffer_len = -1;
             return NULL;
         }
@@ -593,7 +596,7 @@ void child_click_events_key(const char *key) {
  * Generates a click event, if enabled.
  *
  */
-void send_block_clicked(int button, const char *name, const char *instance, int x, int y) {
+void send_block_clicked(int button, const char *name, const char *instance, int x, int y, int x_rel, int y_rel, int width, int height) {
     if (!child.click_events) {
         return;
     }
@@ -620,6 +623,18 @@ void send_block_clicked(int button, const char *name, const char *instance, int 
 
     child_click_events_key("y");
     yajl_gen_integer(gen, y);
+
+    child_click_events_key("relative_x");
+    yajl_gen_integer(gen, x_rel);
+
+    child_click_events_key("relative_y");
+    yajl_gen_integer(gen, y_rel);
+
+    child_click_events_key("width");
+    yajl_gen_integer(gen, width);
+
+    child_click_events_key("height");
+    yajl_gen_integer(gen, height);
 
     yajl_gen_map_close(gen);
     child_write_output();

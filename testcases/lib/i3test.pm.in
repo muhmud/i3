@@ -7,10 +7,12 @@ use Test::Builder;
 use X11::XCB::Rect;
 use X11::XCB::Window;
 use X11::XCB qw(:all);
+use lib qw(@abs_top_srcdir@/AnyEvent-I3/blib/lib);
 use AnyEvent::I3;
 use List::Util qw(first);
 use Time::HiRes qw(sleep);
 use Cwd qw(abs_path);
+use POSIX ':sys_wait_h';
 use Scalar::Util qw(blessed);
 use SocketActivation;
 use i3test::Util qw(slurp);
@@ -36,6 +38,7 @@ our @EXPORT = qw(
     cmd
     sync_with_i3
     exit_gracefully
+    exit_forcefully
     workspace_exists
     focused_ws
     get_socket_path
@@ -45,6 +48,9 @@ our @EXPORT = qw(
     wait_for_map
     wait_for_unmap
     $x
+    kill_all_windows
+    events_for
+    listen_for_binding
 );
 
 =head1 NAME
@@ -75,7 +81,7 @@ i3test automatically "use"s C<Test::More>, C<Data::Dumper>, C<AnyEvent::I3>,
 C<Time::HiRes>’s C<sleep> and C<i3test::Test> so that all of them are available
 to you in your testcase.
 
-See also C<i3test::Test> (L<http://build.i3wm.org/docs/lib-i3test-test.html>)
+See also C<i3test::Test> (L<https://build.i3wm.org/docs/lib-i3test-test.html>)
 which provides additional test instructions (like C<ok> or C<is>).
 
 =cut
@@ -98,14 +104,8 @@ my $i3_pid;
 my $i3_autostart;
 
 END {
-
-    # testcases which start i3 manually should always call exit_gracefully
-    # on their own. Let’s see, whether they really did.
-    if (! $i3_autostart) {
-        return unless $i3_pid;
-
-        $tester->ok(undef, 'testcase called exit_gracefully()');
-    }
+    # Skip the remaining cleanup for testcases which set i3_autostart => 0:
+    return if !defined($i3_pid) && !$i3_autostart;
 
     # don't trigger SIGCHLD handler
     local $SIG{CHLD};
@@ -124,8 +124,8 @@ END {
         exit_gracefully($i3_pid, "/tmp/nested-$ENV{DISPLAY}");
 
     } else {
-        kill(9, $i3_pid)
-            or $tester->BAIL_OUT("could not kill i3");
+        kill(-9, $i3_pid)
+            or $tester->BAIL_OUT("could not kill i3: $!");
 
         waitpid $i3_pid, 0;
     }
@@ -135,9 +135,26 @@ sub import {
     my ($class, %args) = @_;
     my $pkg = caller;
 
-    $i3_autostart = delete($args{i3_autostart}) // 1;
+    $x ||= i3test::X11->new;
+    # set the pointer to a predictable position in case a previous test has
+    # disturbed it
+    $x->warp_pointer(
+	0, # src_window (None)
+	$x->get_root_window(), # dst_window (None)
+	0, # src_x
+	0, # src_y
+	0, # src_width
+	0, # src_height
+	0, # dst_x
+	0); # dst_y
+    # Synchronize with X11 to ensure the pointer has been warped before i3
+    # starts up.
+    $x->get_input_focus_reply($x->get_input_focus()->{sequence});
 
-    my $cv = launch_with_config('-default', dont_block => 1)
+    $i3_autostart = delete($args{i3_autostart}) // 1;
+    my $i3_config = delete($args{i3_config}) // '-default';
+
+    my $cv = launch_with_config($i3_config, dont_block => 1)
         if $i3_autostart;
 
     my $test_more_args = '';
@@ -156,10 +173,6 @@ __
     strict->import;
     warnings->import;
 
-    $x ||= i3test::X11->new;
-    # set the pointer to a predictable position in case a previous test has
-    # disturbed it
-    $x->root->warp_pointer(0, 0);
     $cv->recv if $i3_autostart;
 
     @_ = ($class);
@@ -182,29 +195,11 @@ received, etc.
 sub wait_for_event {
     my ($timeout, $cb) = @_;
 
-    my $cv = AE::cv;
-
     $x->flush;
 
-    # unfortunately, there is no constant for this
-    my $ae_read = 0;
-
-    my $guard = AE::io $x->get_file_descriptor, $ae_read, sub {
-        while (defined(my $event = $x->poll_for_event)) {
-            if ($cb->($event)) {
-                $cv->send(1);
-                last;
-            }
-        }
-    };
-
-    # Trigger timeout after $timeout seconds (can be fractional)
-    my $t = AE::timer $timeout, 0, sub { warn "timeout ($timeout secs)"; $cv->send(0) };
-
-    my $result = $cv->recv;
-    undef $t;
-    undef $guard;
-    return $result;
+    while (defined(my $event = $x->wait_for_event)) {
+	return 1 if $cb->($event);
+    }
 }
 
 =head2 wait_for_map($window)
@@ -351,6 +346,12 @@ sub open_window {
 
     $window->map;
     wait_for_map($window);
+
+    # MapWindow is sent before i3 even starts rendering: the window is placed at
+    # temporary off-screen coordinates first, and x_push_changes() sends further
+    # X11 requests to set focus etc. Hence, we sync with i3 before continuing.
+    sync_with_i3();
+
     return $window;
 }
 
@@ -662,7 +663,7 @@ processes, only after all other events are done.
 This can be used to ensure the results of a cmd 'focus left' are pushed to
 X11 and that C<< $x->input_focus >> returns the correct value afterwards.
 
-See also L<http://build.i3wm.org/docs/testsuite.html> for a longer explanation.
+See also L<https://build.i3wm.org/docs/testsuite.html> for a longer explanation.
 
   my $window = open_window;
   $window->add_hint('urgency');
@@ -689,6 +690,7 @@ sub sync_with_i3 {
         $_sync_window = open_window(
             rect => [ -15, -15, 10, 10 ],
             override_redirect => 1,
+            dont_map => 1,
         );
     }
 
@@ -759,7 +761,7 @@ sub exit_gracefully {
 
     if (!$exited) {
         kill(9, $pid)
-            or $tester->BAIL_OUT("could not kill i3");
+            or $tester->BAIL_OUT("could not kill i3: $!");
     }
 
     if ($socketpath =~ m,^/tmp/i3-test-socket-,) {
@@ -767,6 +769,47 @@ sub exit_gracefully {
     }
 
     waitpid $pid, 0;
+    undef $i3_pid;
+}
+
+=head2 exit_forcefully($pid, [ $signal ])
+
+Tries to exit i3 forcefully by sending a signal (defaults to SIGTERM).
+
+You only need to use this function if you want to test signal handling
+(in which case you must have launched i3 on your own with
+C<launch_with_config>).
+
+  use i3test i3_autostart => 0;
+  my $pid = launch_with_config($config);
+  # …
+  exit_forcefully($pid);
+
+=cut
+sub exit_forcefully {
+    my ($pid, $signal) = @_;
+    $signal ||= 'TERM';
+
+    # Send the given signal to the i3 instance and wait for up to 10s
+    # for it to terminate.
+    kill($signal, $pid)
+        or $tester->BAIL_OUT("could not kill i3: $!");
+    my $status;
+    my $timeout = 10;
+    do {
+        $status = waitpid $pid, WNOHANG;
+
+        if ($status <= 0) {
+            sleep(1);
+            $timeout--;
+        }
+    } while ($status <= 0 && $timeout > 0);
+
+    if ($status <= 0) {
+        kill('KILL', $pid)
+            or $tester->BAIL_OUT("could not kill i3: $!");
+        waitpid $pid, 0;
+    }
     undef $i3_pid;
 }
 
@@ -791,14 +834,7 @@ sub get_socket_path {
     if ($cache && defined($_cached_socket_path)) {
         return $_cached_socket_path;
     }
-
-    my $atom = $x->atom(name => 'I3_SOCKET_PATH');
-    my $cookie = $x->get_property(0, $x->get_root_window(), $atom->id, GET_PROPERTY_TYPE_ANY, 0, 256);
-    my $reply = $x->get_property_reply($cookie->{sequence});
-    my $socketpath = $reply->{value};
-    if ($socketpath eq "/tmp/nested-$ENV{DISPLAY}") {
-        $socketpath .= '-activation';
-    }
+    my $socketpath = i3test::Util::get_socket_path($x);
     $_cached_socket_path = $socketpath;
     return $socketpath;
 }
@@ -833,17 +869,17 @@ sub launch_with_config {
 
     my ($fh, $tmpfile) = tempfile("i3-cfg-for-$ENV{TESTNAME}-XXXXX", UNLINK => 1);
 
+    say $fh "ipc-socket $tmp_socket_path"
+        unless $args{dont_add_socket_path};
+
     if ($config ne '-default') {
-        say $fh $config;
+        print $fh $config;
     } else {
         open(my $conf_fh, '<', '@abs_top_srcdir@/testcases/i3-test.config')
             or $tester->BAIL_OUT("could not open default config: $!");
         local $/;
         say $fh scalar <$conf_fh>;
     }
-
-    say $fh "ipc-socket $tmp_socket_path"
-        unless $args{dont_add_socket_path};
 
     close($fh);
 
@@ -861,6 +897,8 @@ sub launch_with_config {
         cv => $cv,
         dont_create_temp_dir => $args{dont_create_temp_dir},
         validate_config => $args{validate_config},
+        inject_randr15 => $args{inject_randr15},
+        inject_randr15_outputinfo => $args{inject_randr15_outputinfo},
     );
 
     # If we called i3 with -C, we wait for it to exit and then return as
@@ -895,6 +933,97 @@ Returns the content of the log file for the current test.
 sub get_i3_log {
     my $logfile = "$ENV{OUTDIR}/i3-log-for-$ENV{TESTNAME}";
     return slurp($logfile);
+}
+
+=head2 kill_all_windows
+
+Kills all windows to clean up between tests.
+
+=cut
+sub kill_all_windows {
+    # Sync in case not all windows are managed by i3 just yet.
+    sync_with_i3;
+    cmd '[title=".*"] kill';
+}
+
+=head2 events_for($subscribecb, [ $rettype ], [ $eventcbs ])
+
+Helper function which returns an array containing all events of type $rettype
+which were generated by i3 while $subscribecb was running.
+
+Set $eventcbs to subscribe to multiple event types and/or perform your own event
+aggregation.
+
+=cut
+sub events_for {
+    my ($subscribecb, $rettype, $eventcbs) = @_;
+
+    my @events;
+    $eventcbs //= {};
+    if (defined($rettype)) {
+	$eventcbs->{$rettype} = sub { push @events, shift };
+    }
+    my $subscribed = AnyEvent->condvar;
+    my $flushed = AnyEvent->condvar;
+    $eventcbs->{tick} = sub {
+	my ($event) = @_;
+	if ($event->{first}) {
+	    $subscribed->send($event);
+	} else {
+	    $flushed->send($event);
+	}
+    };
+    my $i3 = i3(get_socket_path(0));
+    $i3->connect->recv;
+    $i3->subscribe($eventcbs)->recv;
+    $subscribed->recv;
+    # Subscription established, run the callback.
+    $subscribecb->();
+    # Now generate a tick event, which we know we’ll receive (and at which point
+    # all other events have been received).
+    my $nonce = int(rand(255)) + 1;
+    $i3->send_tick($nonce);
+
+    my $tick = $flushed->recv;
+    $tester->is_eq($tick->{payload}, $nonce, 'tick nonce received');
+    return @events;
+}
+
+=head2 listen_for_binding($cb)
+
+Helper function to evaluate whether sending KeyPress/KeyRelease events via XTEST
+triggers an i3 key binding or not. Expects key bindings to be configured in the
+form “bindsym <binding> nop <binding>”, e.g.  “bindsym Mod4+Return nop
+Mod4+Return”.
+
+  is(listen_for_binding(
+      sub {
+          xtest_key_press(133); # Super_L
+          xtest_key_press(36); # Return
+          xtest_key_release(36); # Return
+          xtest_key_release(133); # Super_L
+          xtest_sync_with_i3;
+      },
+      ),
+     'Mod4+Return',
+     'triggered the "Mod4+Return" keybinding');
+
+=cut
+
+sub listen_for_binding {
+    my ($cb) = @_;
+    my $triggered = AnyEvent->condvar;
+    my @events = events_for(
+	$cb,
+	'binding');
+
+    $tester->is_eq(scalar @events, 1, 'Received precisely one event');
+    $tester->is_eq($events[0]->{change}, 'run', 'change is "run"');
+    # We look at the command (which is “nop <binding>”) because that is easier
+    # than re-assembling the string representation of $event->{binding}.
+    my $command = $events[0]->{binding}->{command};
+    $command =~ s/^nop //g;
+    return $command;
 }
 
 =head1 AUTHOR

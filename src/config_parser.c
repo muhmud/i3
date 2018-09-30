@@ -235,7 +235,7 @@ static void next_state(const cmdp_token *token) {
  *
  */
 static const char *start_of_line(const char *walk, const char *beginning) {
-    while (*walk != '\n' && *walk != '\r' && walk >= beginning) {
+    while (walk >= beginning && *walk != '\n' && *walk != '\r') {
         walk--;
     }
 
@@ -743,7 +743,7 @@ static char *migrate_config(char *input, off_t size) {
 
     /* read the script’s output */
     int conv_size = 65535;
-    char *converted = smalloc(conv_size);
+    char *converted = scalloc(conv_size, 1);
     int read_bytes = 0, ret;
     do {
         if (read_bytes == conv_size) {
@@ -764,6 +764,7 @@ static char *migrate_config(char *input, off_t size) {
     wait(&status);
     if (!WIFEXITED(status)) {
         fprintf(stderr, "Child did not terminate normally, using old config file (will lead to broken behaviour)\n");
+        FREE(converted);
         return NULL;
     }
 
@@ -778,6 +779,7 @@ static char *migrate_config(char *input, off_t size) {
             fprintf(stderr, "# i3 config file (v4)\n");
             /* TODO: nag the user with a message to include a hint for i3 in their config file */
         }
+        FREE(converted);
         return NULL;
     }
 
@@ -898,6 +900,15 @@ bool parse_file(const char *f, bool use_nagbar) {
     if ((fstr = fdopen(fd, "r")) == NULL)
         die("Could not fdopen: %s\n", strerror(errno));
 
+    FREE(current_config);
+    current_config = scalloc(stbuf.st_size + 1, 1);
+    if ((ssize_t)fread(current_config, 1, stbuf.st_size, fstr) != stbuf.st_size) {
+        die("Could not fread: %s\n", strerror(errno));
+    }
+    rewind(fstr);
+
+    bool invalid_sets = false;
+
     while (!feof(fstr)) {
         if (!continuation)
             continuation = buffer;
@@ -911,6 +922,7 @@ bool parse_file(const char *f, bool use_nagbar) {
         }
 
         /* sscanf implicitly strips whitespace. */
+        value[0] = '\0';
         const bool skip_line = (sscanf(buffer, "%511s %4095[^\n]", key, value) < 1 || strlen(key) < 3);
         const bool comment = (key[0] == '#');
         value[4095] = '\n';
@@ -931,26 +943,28 @@ bool parse_file(const char *f, bool use_nagbar) {
             continue;
         }
 
-        if (strcasecmp(key, "set") == 0) {
+        if (strcasecmp(key, "set") == 0 && *value != '\0') {
             char v_key[512];
-            char v_value[4096];
+            char v_value[4096] = {'\0'};
 
             if (sscanf(value, "%511s %4095[^\n]", v_key, v_value) < 1) {
                 ELOG("Failed to parse variable specification '%s', skipping it.\n", value);
+                invalid_sets = true;
                 continue;
             }
 
             if (v_key[0] != '$') {
                 ELOG("Malformed variable assignment, name has to start with $\n");
+                invalid_sets = true;
                 continue;
             }
 
             upsert_variable(&variables, v_key, v_value);
             continue;
         } else if (strcasecmp(key, "set_from_resource") == 0) {
-            char res_name[512];
+            char res_name[512] = {'\0'};
             char v_key[512];
-            char fallback[4096];
+            char fallback[4096] = {'\0'};
 
             /* Ensure that this string is terminated. For example, a user might
              * want a variable to be empty if the resource can't be found and
@@ -962,11 +976,13 @@ bool parse_file(const char *f, bool use_nagbar) {
 
             if (sscanf(value, "%511s %511s %4095[^\n]", v_key, res_name, fallback) < 1) {
                 ELOG("Failed to parse resource specification '%s', skipping it.\n", value);
+                invalid_sets = true;
                 continue;
             }
 
             if (v_key[0] != '$') {
                 ELOG("Malformed variable assignment, name has to start with $\n");
+                invalid_sets = true;
                 continue;
             }
 
@@ -1002,7 +1018,7 @@ bool parse_file(const char *f, bool use_nagbar) {
         char *next;
         for (next = bufcopy;
              next < (bufcopy + stbuf.st_size) &&
-                 (next = strcasestr(next, current->key)) != NULL;
+             (next = strcasestr(next, current->key)) != NULL;
              next += strlen(current->key)) {
             *next = '_';
             extra_bytes += extra;
@@ -1013,7 +1029,7 @@ bool parse_file(const char *f, bool use_nagbar) {
     /* Then, allocate a new buffer and copy the file over to the new one,
      * but replace occurrences of our variables */
     char *walk = buf, *destwalk;
-    char *new = smalloc(stbuf.st_size + extra_bytes + 1);
+    char *new = scalloc(stbuf.st_size + extra_bytes + 1, 1);
     destwalk = new;
     while (walk < (buf + stbuf.st_size)) {
         /* Find the next variable */
@@ -1049,7 +1065,7 @@ bool parse_file(const char *f, bool use_nagbar) {
     int version = detect_version(buf);
     if (version == 3) {
         /* We need to convert this v3 configuration */
-        char *converted = migrate_config(new, stbuf.st_size);
+        char *converted = migrate_config(new, strlen(new));
         if (converted != NULL) {
             ELOG("\n");
             ELOG("****************************************************************\n");
@@ -1082,12 +1098,12 @@ bool parse_file(const char *f, bool use_nagbar) {
     check_for_duplicate_bindings(context);
     reorder_bindings();
 
-    if (use_nagbar && (context->has_errors || context->has_warnings)) {
+    if (use_nagbar && (context->has_errors || context->has_warnings || invalid_sets)) {
         ELOG("FYI: You are using i3 version %s\n", i3_version);
         if (version == 3)
             ELOG("Please convert your configfile first, then fix any remaining errors (see above).\n");
 
-        start_config_error_nagbar(f, context->has_errors);
+        start_config_error_nagbar(f, context->has_errors || invalid_sets);
     }
 
     bool has_errors = context->has_errors;
