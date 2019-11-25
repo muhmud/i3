@@ -2381,10 +2381,10 @@ bool con_swap(Con *first, Con *second) {
     fullscreen_mode_t second_fullscreen_mode = second->fullscreen_mode;
 
     if (first_fullscreen_mode != CF_NONE) {
-        con_disable_fullscreen(first);
+        con_disable_fullscreen(first, 0);
     }
     if (second_fullscreen_mode != CF_NONE) {
-        con_disable_fullscreen(second);
+        con_disable_fullscreen(second, 0);
     }
 
     double first_percent = first->percent;

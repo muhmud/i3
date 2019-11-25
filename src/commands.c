@@ -1274,7 +1274,7 @@ static void cmd_focus_force_focus(Con *con) {
     Con *ws = con_get_workspace(con);
     Con *fullscreen_on_ws = (focused && focused->fullscreen_mode == CF_GLOBAL) ? focused : con_get_fullscreen_con(ws, CF_OUTPUT);
     if (fullscreen_on_ws && fullscreen_on_ws != con && !con_has_parent(con, fullscreen_on_ws)) {
-        con_disable_fullscreen(fullscreen_on_ws);
+        con_disable_fullscreen(fullscreen_on_ws, 0);
     }
     con_activate(con);
 }
