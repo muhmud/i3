@@ -32,14 +32,12 @@
  * RLIM_INFINITY for i3 debugging versions. */
 struct rlimit original_rlimit_core;
 
-/** The number of file descriptors passed via socket activation. */
+/* The number of file descriptors passed via socket activation. */
 int listen_fds;
 
 /* We keep the xcb_prepare watcher around to be able to enable and disable it
  * temporarily for drag_pointer(). */
 static struct ev_prepare *xcb_prepare;
-
-extern Con *focused;
 
 char **start_argv;
 
@@ -91,6 +89,7 @@ struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignment
 /* We hope that those are supported and set them to true */
 bool xcursor_supported = true;
 bool xkb_supported = true;
+bool shape_supported = true;
 
 bool force_xinerama = false;
 
@@ -162,6 +161,15 @@ void main_set_x11_cb(bool enable) {
  *
  */
 static void i3_exit(void) {
+    if (*shmlogname != '\0') {
+        fprintf(stderr, "Closing SHM log \"%s\"\n", shmlogname);
+        fflush(stderr);
+        shm_unlink(shmlogname);
+    }
+    ipc_shutdown(SHUTDOWN_REASON_EXIT, -1);
+    unlink(config.ipc_socket_path);
+    xcb_disconnect(conn);
+
 /* We need ev >= 4 for the following code. Since it is not *that* important (it
  * only makes sure that there are no i3-nagbar instances left behind) we still
  * support old systems with libev 3. */
@@ -169,13 +177,9 @@ static void i3_exit(void) {
     ev_loop_destroy(main_loop);
 #endif
 
-    if (*shmlogname != '\0') {
-        fprintf(stderr, "Closing SHM log \"%s\"\n", shmlogname);
-        fflush(stderr);
-        shm_unlink(shmlogname);
-    }
-    ipc_shutdown(SHUTDOWN_REASON_EXIT);
-    unlink(config.ipc_socket_path);
+#ifdef I3_ASAN_ENABLED
+    __lsan_do_leak_check();
+#endif
 }
 
 /*
@@ -230,6 +234,20 @@ static void setup_term_handlers(void) {
          * the main loop. */
         ev_unref(main_loop);
     }
+}
+
+static int parse_restart_fd(void) {
+    const char *restart_fd = getenv("_I3_RESTART_FD");
+    if (restart_fd == NULL) {
+        return -1;
+    }
+
+    long int fd = -1;
+    if (!parse_long(restart_fd, &fd, 10)) {
+        ELOG("Malformed _I3_RESTART_FD \"%s\"\n", restart_fd);
+        return -1;
+    }
+    return fd;
 }
 
 int main(int argc, char *argv[]) {
@@ -416,7 +434,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (only_check_config) {
-        exit(parse_configuration(override_configpath, false) ? 0 : 1);
+        exit(load_configuration(override_configpath, C_VALIDATE) ? 0 : 1);
     }
 
     /* If the user passes more arguments, we act like i3-msg would: Just send
@@ -516,7 +534,7 @@ int main(int argc, char *argv[]) {
 
     conn = xcb_connect(NULL, &conn_screen);
     if (xcb_connection_has_error(conn))
-        errx(EXIT_FAILURE, "Cannot open display\n");
+        errx(EXIT_FAILURE, "Cannot open display");
 
     sndisplay = sn_xcb_display_new(conn, NULL, NULL);
 
@@ -530,7 +548,7 @@ int main(int argc, char *argv[]) {
     root_screen = xcb_aux_get_screen(conn, conn_screen);
     root = root_screen->root;
 
-/* Place requests for the atoms we need as soon as possible */
+    /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \
     xcb_intern_atom_cookie_t atom##_cookie = xcb_intern_atom(conn, 0, strlen(#atom), #atom);
 #include "atoms.xmacro"
@@ -568,7 +586,7 @@ int main(int argc, char *argv[]) {
     xcb_get_geometry_cookie_t gcookie = xcb_get_geometry(conn, root);
     xcb_query_pointer_cookie_t pointercookie = xcb_query_pointer(conn, root);
 
-/* Setup NetWM atoms */
+    /* Setup NetWM atoms */
 #define xmacro(name)                                                                       \
     do {                                                                                   \
         xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(conn, name##_cookie, NULL); \
@@ -582,7 +600,7 @@ int main(int argc, char *argv[]) {
 #include "atoms.xmacro"
 #undef xmacro
 
-    load_configuration(conn, override_configpath, false);
+    load_configuration(override_configpath, C_LOAD);
 
     if (config.ipc_socket_path == NULL) {
         /* Fall back to a file name in /tmp/ based on the PID */
@@ -624,6 +642,9 @@ int main(int argc, char *argv[]) {
         xcb_set_root_cursor(XCURSOR_CURSOR_POINTER);
 
     const xcb_query_extension_reply_t *extreply;
+    xcb_prefetch_extension_data(conn, &xcb_xkb_id);
+    xcb_prefetch_extension_data(conn, &xcb_shape_id);
+
     extreply = xcb_get_extension_data(conn, &xcb_xkb_id);
     xkb_supported = extreply->present;
     if (!extreply->present) {
@@ -643,8 +664,16 @@ int main(int argc, char *argv[]) {
         /* Setting both, XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE and
          * XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED, will lead to the
          * X server sending us the full XKB state in KeyPress and KeyRelease:
-         * https://sources.debian.net/src/xorg-server/2:1.17.2-1.1/xkb/xkbEvents.c/?hl=927#L927
+         * https://cgit.freedesktop.org/xorg/xserver/tree/xkb/xkbEvents.c?h=xorg-server-1.20.0#n927
+         *
+         * XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT enable detectable autorepeat:
+         * https://www.x.org/releases/current/doc/kbproto/xkbproto.html#Detectable_Autorepeat
+         * This affects bindings using the --release flag: instead of getting multiple KeyRelease
+         * events we get only one event when the key is physically released by the user.
          */
+        const uint32_t mask = XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE |
+                              XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED |
+                              XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT;
         xcb_xkb_per_client_flags_reply_t *pcf_reply;
         /* The last three parameters are unset because they are only relevant
          * when using a feature called “automatic reset of boolean controls”:
@@ -655,22 +684,43 @@ int main(int argc, char *argv[]) {
             xcb_xkb_per_client_flags(
                 conn,
                 XCB_XKB_ID_USE_CORE_KBD,
-                XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE | XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED,
-                XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE | XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED,
+                mask,
+                mask,
                 0 /* uint32_t ctrlsToChange */,
                 0 /* uint32_t autoCtrls */,
                 0 /* uint32_t autoCtrlsValues */),
             NULL);
-        if (pcf_reply == NULL ||
-            !(pcf_reply->value & XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE)) {
-            ELOG("Could not set XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE\n");
-        }
-        if (pcf_reply == NULL ||
-            !(pcf_reply->value & XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED)) {
-            ELOG("Could not set XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED\n");
-        }
+
+#define PCF_REPLY_ERROR(_value)                                    \
+    do {                                                           \
+        if (pcf_reply == NULL || !(pcf_reply->value & (_value))) { \
+            ELOG("Could not set " #_value "\n");                   \
+        }                                                          \
+    } while (0)
+
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE);
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED);
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT);
+
         free(pcf_reply);
         xkb_base = extreply->first_event;
+    }
+
+    /* Check for Shape extension. We want to handle input shapes which is
+     * introduced in 1.1. */
+    extreply = xcb_get_extension_data(conn, &xcb_shape_id);
+    if (extreply->present) {
+        shape_base = extreply->first_event;
+        xcb_shape_query_version_cookie_t cookie = xcb_shape_query_version(conn);
+        xcb_shape_query_version_reply_t *version =
+            xcb_shape_query_version_reply(conn, cookie, NULL);
+        shape_supported = version && version->minor_version >= 1;
+        free(version);
+    } else {
+        shape_supported = false;
+    }
+    if (!shape_supported) {
+        DLOG("shape 1.1 is not present on this server\n");
     }
 
     restore_connect();
@@ -811,15 +861,22 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    {
+        const int restart_fd = parse_restart_fd();
+        if (restart_fd != -1) {
+            DLOG("serving restart fd %d", restart_fd);
+            ipc_client *client = ipc_new_client_on_fd(main_loop, restart_fd);
+            ipc_confirm_restart(client);
+            unsetenv("_I3_RESTART_FD");
+        }
+    }
+
     /* Set up i3 specific atoms like I3_SOCKET_PATH and I3_CONFIG_PATH */
     x_set_i3_atoms();
     ewmh_update_workarea();
 
     /* Set the ewmh desktop properties. */
-    ewmh_update_current_desktop();
-    ewmh_update_number_of_desktops();
-    ewmh_update_desktop_names();
-    ewmh_update_desktop_viewport();
+    ewmh_update_desktop_properties();
 
     struct ev_io *xcb_watcher = scalloc(1, sizeof(struct ev_io));
     xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
@@ -949,8 +1006,9 @@ int main(int argc, char *argv[]) {
     Barconfig *barconfig;
     TAILQ_FOREACH(barconfig, &barconfigs, configs) {
         char *command = NULL;
-        sasprintf(&command, "%s --bar_id=%s --socket=\"%s\"",
+        sasprintf(&command, "%s %s --bar_id=%s --socket=\"%s\"",
                   barconfig->i3bar_command ? barconfig->i3bar_command : "i3bar",
+                  barconfig->verbose ? "-V" : "",
                   barconfig->id, current_socketpath);
         LOG("Starting bar process: %s\n", command);
         start_application(command, true);

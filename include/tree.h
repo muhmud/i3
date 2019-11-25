@@ -73,12 +73,8 @@ void tree_next(char way, orientation_t orientation);
  * The dont_kill_parent flag is specified when the function calls itself
  * recursively while deleting a containers children.
  *
- * The force_set_focus flag is specified in the case of killing a floating
- * window: tree_close_internal() will be invoked for the CT_FLOATINGCON (the parent
- * container) and focus should be set there.
- *
  */
-bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_parent, bool force_set_focus);
+bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_parent);
 
 /**
  * Loads tree from ~/.i3/_restart.json (used for in-place restarts).

@@ -20,7 +20,8 @@
  */
 Con *con_new_skeleton(Con *parent, i3Window *window);
 
-/* A wrapper for con_new_skeleton, to retain the old con_new behaviour
+/**
+ * A wrapper for con_new_skeleton, to retain the old con_new behaviour
  *
  */
 Con *con_new(Con *parent, i3Window *window);
@@ -121,6 +122,14 @@ Con *con_parent_with_orientation(Con *con, orientation_t orientation);
 Con *con_get_fullscreen_con(Con *con, fullscreen_mode_t fullscreen_mode);
 
 /**
+ * Returns the fullscreen node that covers the given workspace if it exists.
+ * This is either a CF_GLOBAL fullscreen container anywhere or a CF_OUTPUT
+ * fullscreen container in the workspace.
+ *
+ */
+Con *con_get_fullscreen_covering_ws(Con *ws);
+
+/**
  * Returns true if the container is internal, such as __i3_scratch
  *
  */
@@ -212,7 +221,7 @@ void con_mark_toggle(Con *con, const char *mark, mark_mode_t mode);
  */
 void con_mark(Con *con, const char *mark, mark_mode_t mode);
 
-/*
+/**
  * Removes marks from containers.
  * If con is NULL, all containers are considered.
  * If name is NULL, this removes all existing marks.
@@ -370,13 +379,6 @@ orientation_t con_orientation(Con *con);
 Con *con_next_focused(Con *con);
 
 /**
- * Get the next/previous container in the specified orientation. This may
- * travel up until it finds a container with suitable orientation.
- *
- */
-Con *con_get_next(Con *con, char way, orientation_t orientation);
-
-/**
  * Returns the focused con inside this client, descending the tree as far as
  * possible. This comes in handy when attaching a con to a workspace at the
  * currently focused position, for example.
@@ -394,7 +396,7 @@ Con *con_descend_focused(Con *con);
  */
 Con *con_descend_tiling_focused(Con *con);
 
-/*
+/**
  * Returns the leftmost, rightmost, etc. container in sub-tree. For example, if
  * direction is D_LEFT, then we return the rightmost container and if direction
  * is D_RIGHT, we return the leftmost container.  This is because if we are
@@ -524,3 +526,10 @@ i3String *con_parse_title_format(Con *con);
  *
  */
 bool con_swap(Con *first, Con *second);
+
+/**
+ * Returns given container's rect size depending on its orientation.
+ * i.e. its width when horizontal, its height when vertical.
+ *
+ */
+uint32_t con_rect_size_in_orientation(Con *con);

@@ -31,7 +31,15 @@ static bool parsing_marks;
 struct Match *current_swallow;
 static bool swallow_is_empty;
 static int num_marks;
-static char **marks;
+/* We need to save each container that needs to be marked if we want to support
+ * marking non-leaf containers. In their case, the end_map for their children is
+ * called before their own end_map, so marking json_node would end up marking
+ * the latest child. We can't just mark containers immediately after we parse a
+ * mark because of #2511. */
+struct pending_marks {
+    char *mark;
+    Con *con_to_be_marked;
+} * marks;
 
 /* This list is used for reordering the focus stack after parsing the 'focus'
  * array. */
@@ -108,18 +116,11 @@ static int json_end_map(void *ctx) {
             /* Prevent name clashes when appending a workspace, e.g. when the
              * user tries to restore a workspace called “1” but already has a
              * workspace called “1”. */
-            Con *output;
-            Con *workspace = NULL;
-            TAILQ_FOREACH(output, &(croot->nodes_head), nodes)
-            GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, json_node->name));
             char *base = sstrdup(json_node->name);
             int cnt = 1;
-            while (workspace != NULL) {
+            while (get_existing_workspace_by_name(json_node->name) != NULL) {
                 FREE(json_node->name);
                 sasprintf(&(json_node->name), "%s_%d", base, cnt++);
-                workspace = NULL;
-                TAILQ_FOREACH(output, &(croot->nodes_head), nodes)
-                GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, json_node->name));
             }
             free(base);
 
@@ -151,17 +152,18 @@ static int json_end_map(void *ctx) {
                 }
             }
 
-            floating_check_size(json_node);
+            floating_check_size(json_node, false);
         }
 
         if (num_marks > 0) {
             for (int i = 0; i < num_marks; i++) {
-                con_mark(json_node, marks[i], MM_ADD);
-                free(marks[i]);
+                Con *con = marks[i].con_to_be_marked;
+                char *mark = marks[i].mark;
+                con_mark(con, mark, MM_ADD);
+                free(mark);
             }
 
-            free(marks);
-            marks = NULL;
+            FREE(marks);
             num_marks = 0;
         }
 
@@ -282,8 +284,9 @@ static int json_string(void *ctx, const unsigned char *val, size_t len) {
         char *mark;
         sasprintf(&mark, "%.*s", (int)len, val);
 
-        marks = srealloc(marks, (++num_marks) * sizeof(char *));
-        marks[num_marks - 1] = sstrdup(mark);
+        marks = srealloc(marks, (++num_marks) * sizeof(struct pending_marks));
+        marks[num_marks - 1].mark = sstrdup(mark);
+        marks[num_marks - 1].con_to_be_marked = json_node;
     } else {
         if (strcasecmp(last_key, "name") == 0) {
             json_node->name = scalloc(len + 1, 1);
@@ -417,6 +420,9 @@ static int json_string(void *ctx, const unsigned char *val, size_t len) {
             else if (strcasecmp(buf, "changed") == 0)
                 json_node->scratchpad_state = SCRATCHPAD_CHANGED;
             free(buf);
+        } else if (strcasecmp(last_key, "previous_workspace_name") == 0) {
+            FREE(previous_workspace_name);
+            previous_workspace_name = sstrndup((const char *)val, len);
         }
     }
     return 1;
@@ -618,6 +624,17 @@ void tree_append_json(Con *con, const char *buf, const size_t len, char **errorm
     yajl_config(hand, yajl_allow_comments, true);
     /* Allow multiple values, i.e. multiple nodes to attach */
     yajl_config(hand, yajl_allow_multiple_values, true);
+    /* We don't need to validate that the input is valid UTF8 here.
+     * tree_append_json is called in two cases:
+     * 1. With the append_layout command. json_validate is called first and will
+     *    fail on invalid UTF8 characters so we don't need to recheck.
+     * 2. With an in-place restart. The rest of the codebase should be
+     *    responsible for producing valid UTF8 JSON output. If not,
+     *    tree_append_json will just preserve invalid UTF8 strings in the tree
+     *    instead of failing to parse the layout file which could lead to
+     *    problems like in #3156.
+     * Either way, disabling UTF8 validation slightly speeds up yajl. */
+    yajl_config(hand, yajl_dont_validate_strings, true);
     json_node = con;
     to_focus = NULL;
     incomplete = 0;
@@ -639,6 +656,9 @@ void tree_append_json(Con *con, const char *buf, const size_t len, char **errorm
         while (incomplete-- > 0) {
             Con *parent = json_node->parent;
             DLOG("freeing incomplete container %p\n", json_node);
+            if (json_node == to_focus) {
+                to_focus = NULL;
+            }
             con_free(json_node);
             json_node = parent;
         }

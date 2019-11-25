@@ -171,7 +171,7 @@ static long get_long(const char *identifier) {
 
 static void clear_stack(void) {
     for (int c = 0; c < 10; c++) {
-        if (stack[c].type == STACK_STR && stack[c].val.str != NULL)
+        if (stack[c].type == STACK_STR)
             free(stack[c].val.str);
         stack[c].identifier = NULL;
         stack[c].val.str = NULL;
@@ -409,7 +409,7 @@ struct ConfigResultIR *parse_config(const char *input, struct context *context) 
                 if (*walk == '\0' || *walk == '\n' || *walk == '\r') {
                     next_state(token);
                     token_handled = true;
-/* To make sure we start with an appropriate matching
+                    /* To make sure we start with an appropriate matching
                      * datastructure for commands which do *not* specify any
                      * criteria, we re-initialize the criteria system after
                      * every command. */

@@ -67,6 +67,7 @@ typedef struct reply_t {
     char *errorposition;
 } reply_t;
 
+static int exit_code = 0;
 static reply_t last_reply;
 
 static int reply_boolean_cb(void *params, int val) {
@@ -76,8 +77,8 @@ static int reply_boolean_cb(void *params, int val) {
 }
 
 static int reply_string_cb(void *params, const unsigned char *val, size_t len) {
-    char *str = scalloc(len + 1, 1);
-    strncpy(str, (const char *)val, len);
+    char *str = sstrndup((const char *)val, len);
+
     if (strcmp(last_key, "error") == 0)
         last_reply.error = str;
     else if (strcmp(last_key, "input") == 0)
@@ -95,17 +96,19 @@ static int reply_start_map_cb(void *params) {
 
 static int reply_end_map_cb(void *params) {
     if (!last_reply.success) {
-        fprintf(stderr, "ERROR: Your command: %s\n", last_reply.input);
-        fprintf(stderr, "ERROR:               %s\n", last_reply.errorposition);
+        if (last_reply.input) {
+            fprintf(stderr, "ERROR: Your command: %s\n", last_reply.input);
+            fprintf(stderr, "ERROR:               %s\n", last_reply.errorposition);
+        }
         fprintf(stderr, "ERROR: %s\n", last_reply.error);
+        exit_code = 2;
     }
     return 1;
 }
 
 static int reply_map_key_cb(void *params, const unsigned char *keyVal, size_t keyLen) {
     free(last_key);
-    last_key = scalloc(keyLen + 1, 1);
-    strncpy(last_key, (const char *)keyVal, keyLen);
+    last_key = sstrndup((const char *)keyVal, keyLen);
     return 1;
 }
 
@@ -124,8 +127,7 @@ static yajl_callbacks reply_callbacks = {
 static char *config_last_key = NULL;
 
 static int config_string_cb(void *params, const unsigned char *val, size_t len) {
-    char *str = scalloc(len + 1, 1);
-    strncpy(str, (const char *)val, len);
+    char *str = sstrndup((const char *)val, len);
     if (strcmp(config_last_key, "config") == 0) {
         fprintf(stdout, "%s", str);
     }
@@ -142,8 +144,7 @@ static int config_end_map_cb(void *params) {
 }
 
 static int config_map_key_cb(void *params, const unsigned char *keyVal, size_t keyLen) {
-    config_last_key = scalloc(keyLen + 1, 1);
-    strncpy(config_last_key, (const char *)keyVal, keyLen);
+    config_last_key = sstrndup((const char *)keyVal, keyLen);
     return 1;
 }
 
@@ -164,16 +165,18 @@ int main(int argc, char *argv[]) {
     uint32_t message_type = I3_IPC_MESSAGE_TYPE_RUN_COMMAND;
     char *payload = NULL;
     bool quiet = false;
+    bool monitor = false;
 
     static struct option long_options[] = {
         {"socket", required_argument, 0, 's'},
         {"type", required_argument, 0, 't'},
         {"version", no_argument, 0, 'v'},
         {"quiet", no_argument, 0, 'q'},
+        {"monitor", no_argument, 0, 'm'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}};
 
-    char *options_string = "s:t:vhq";
+    char *options_string = "s:t:vhqm";
 
     while ((o = getopt_long(argc, argv, options_string, long_options, &option_index)) != -1) {
         if (o == 's') {
@@ -202,23 +205,32 @@ int main(int argc, char *argv[]) {
                 message_type = I3_IPC_MESSAGE_TYPE_GET_CONFIG;
             } else if (strcasecmp(optarg, "send_tick") == 0) {
                 message_type = I3_IPC_MESSAGE_TYPE_SEND_TICK;
+            } else if (strcasecmp(optarg, "subscribe") == 0) {
+                message_type = I3_IPC_MESSAGE_TYPE_SUBSCRIBE;
             } else {
                 printf("Unknown message type\n");
-                printf("Known types: run_command, get_workspaces, get_outputs, get_tree, get_marks, get_bar_config, get_binding_modes, get_version, get_config, send_tick\n");
+                printf("Known types: run_command, get_workspaces, get_outputs, get_tree, get_marks, get_bar_config, get_binding_modes, get_version, get_config, send_tick, subscribe\n");
                 exit(EXIT_FAILURE);
             }
         } else if (o == 'q') {
             quiet = true;
+        } else if (o == 'm') {
+            monitor = true;
         } else if (o == 'v') {
             printf("i3-msg " I3_VERSION "\n");
             return 0;
         } else if (o == 'h') {
             printf("i3-msg " I3_VERSION "\n");
-            printf("i3-msg [-s <socket>] [-t <type>] <message>\n");
+            printf("i3-msg [-s <socket>] [-t <type>] [-m] <message>\n");
             return 0;
         } else if (o == '?') {
             exit(EXIT_FAILURE);
         }
+    }
+
+    if (monitor && message_type != I3_IPC_MESSAGE_TYPE_SUBSCRIBE) {
+        fprintf(stderr, "The monitor option -m is used with -t SUBSCRIBE exclusively.\n");
+        exit(EXIT_FAILURE);
     }
 
     /* Use all arguments, separated by whitespace, as payload.
@@ -243,9 +255,6 @@ int main(int argc, char *argv[]) {
     if (ipc_send_message(sockfd, strlen(payload), message_type, (uint8_t *)payload) == -1)
         err(EXIT_FAILURE, "IPC: write()");
     free(payload);
-
-    if (quiet)
-        return 0;
 
     uint32_t reply_length;
     uint32_t reply_type;
@@ -273,8 +282,9 @@ int main(int argc, char *argv[]) {
                 errx(EXIT_FAILURE, "IPC: Could not parse JSON reply.");
         }
 
-        /* NB: We still fall-through and print the reply, because even if one
-         * command failed, that doesn’t mean that all commands failed. */
+        if (!quiet) {
+            printf("%.*s\n", reply_length, reply);
+        }
     } else if (reply_type == I3_IPC_REPLY_TYPE_CONFIG) {
         yajl_handle handle = yajl_alloc(&config_callbacks, NULL, NULL);
         yajl_status state = yajl_parse(handle, (const unsigned char *)reply, reply_length);
@@ -287,15 +297,33 @@ int main(int argc, char *argv[]) {
             case yajl_status_error:
                 errx(EXIT_FAILURE, "IPC: Could not parse JSON reply.");
         }
+    } else if (reply_type == I3_IPC_REPLY_TYPE_SUBSCRIBE) {
+        do {
+            free(reply);
+            if ((ret = ipc_recv_message(sockfd, &reply_type, &reply_length, &reply)) != 0) {
+                if (ret == -1)
+                    err(EXIT_FAILURE, "IPC: read()");
+                exit(1);
+            }
 
-        goto exit;
+            if (!(reply_type & I3_IPC_EVENT_MASK)) {
+                errx(EXIT_FAILURE, "IPC: Received reply of type %d but expected an event", reply_type);
+            }
+
+            if (!quiet) {
+                fprintf(stdout, "%.*s\n", reply_length, reply);
+                fflush(stdout);
+            }
+        } while (monitor);
+    } else {
+        if (!quiet) {
+            printf("%.*s\n", reply_length, reply);
+        }
     }
-    printf("%.*s\n", reply_length, reply);
 
-exit:
     free(reply);
 
     close(sockfd);
 
-    return 0;
+    return exit_code;
 }

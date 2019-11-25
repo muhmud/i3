@@ -20,6 +20,7 @@
 int randr_base = -1;
 int xkb_base = -1;
 int xkb_current_group;
+int shape_base = -1;
 
 /* After mapping/unmapping windows, a notify event is generated. However, we don’t want it,
    since it’d trigger an infinite loop of switching between the different windows when
@@ -184,8 +185,6 @@ static void handle_enter_notify(xcb_enter_notify_event_t *event) {
     focused_id = XCB_NONE;
     con_focus(con_descend_focused(con));
     tree_render();
-
-    return;
 }
 
 /*
@@ -249,8 +248,6 @@ static void handle_mapping_notify(xcb_mapping_notify_event_t *event) {
     ungrab_all_keys(conn);
     translate_keysyms();
     grab_all_keys(conn);
-
-    return;
 }
 
 /*
@@ -266,7 +263,6 @@ static void handle_map_request(xcb_map_request_event_t *event) {
     add_ignore_event(event->sequence, -1);
 
     manage_window(event->window, cookie, false);
-    return;
 }
 
 /*
@@ -315,16 +311,12 @@ static void handle_configure_request(xcb_configure_request_event_t *event) {
 
     DLOG("Configure request!\n");
 
-    Con *workspace = con_get_workspace(con),
-        *fullscreen = NULL;
-
-    /* There might not be a corresponding workspace for dock cons, therefore we
-     * have to be careful here. */
-    if (workspace) {
-        fullscreen = con_get_fullscreen_con(workspace, CF_OUTPUT);
-        if (!fullscreen)
-            fullscreen = con_get_fullscreen_con(workspace, CF_GLOBAL);
+    Con *workspace = con_get_workspace(con);
+    if (workspace && (strcmp(workspace->name, "__i3_scratch") == 0)) {
+        DLOG("This is a scratchpad container, ignoring ConfigureRequest\n");
+        goto out;
     }
+    Con *fullscreen = con_get_fullscreen_covering_ws(workspace);
 
     if (fullscreen != con && con_is_floating(con) && con_is_leaf(con)) {
         /* find the height for the decorations */
@@ -337,12 +329,6 @@ static void handle_configure_request(xcb_configure_request_event_t *event) {
             bsr.height -= deco_height;
         }
         Con *floatingcon = con->parent;
-
-        if (strcmp(con_get_workspace(floatingcon)->name, "__i3_scratch") == 0) {
-            DLOG("This is a scratchpad container, ignoring ConfigureRequest\n");
-            return;
-        }
-
         Rect newrect = floatingcon->rect;
 
         if (event->value_mask & XCB_CONFIG_WINDOW_X) {
@@ -400,15 +386,14 @@ static void handle_configure_request(xcb_configure_request_event_t *event) {
                 DLOG("Dock client will not be moved, we only support moving it to another output.\n");
             }
         }
-        fake_absolute_configure_notify(con);
-        return;
+        goto out;
     }
 
     if (event->value_mask & XCB_CONFIG_WINDOW_STACK_MODE) {
         DLOG("window 0x%08x wants to be stacked %d\n", event->window, event->stack_mode);
 
         /* Emacs and IntelliJ Idea “request focus” by stacking their window
-             * above all others. */
+         * above all others. */
         if (event->stack_mode != XCB_STACK_MODE_ABOVE) {
             DLOG("stack_mode != XCB_STACK_MODE_ABOVE, ignoring ConfigureRequest\n");
             goto out;
@@ -419,23 +404,17 @@ static void handle_configure_request(xcb_configure_request_event_t *event) {
             goto out;
         }
 
-        Con *ws = con_get_workspace(con);
-        if (ws == NULL) {
+        if (workspace == NULL) {
             DLOG("Window is not being managed, ignoring ConfigureRequest\n");
             goto out;
         }
 
-        if (strcmp(ws->name, "__i3_scratch") == 0) {
-            DLOG("This is a scratchpad container, ignoring ConfigureRequest\n");
-            goto out;
-        }
-
-        if (config.focus_on_window_activation == FOWA_FOCUS || (config.focus_on_window_activation == FOWA_SMART && workspace_is_visible(ws))) {
+        if (config.focus_on_window_activation == FOWA_FOCUS || (config.focus_on_window_activation == FOWA_SMART && workspace_is_visible(workspace))) {
             DLOG("Focusing con = %p\n", con);
-            workspace_show(ws);
+            workspace_show(workspace);
             con_activate(con);
             tree_render();
-        } else if (config.focus_on_window_activation == FOWA_URGENT || (config.focus_on_window_activation == FOWA_SMART && !workspace_is_visible(ws))) {
+        } else if (config.focus_on_window_activation == FOWA_URGENT || (config.focus_on_window_activation == FOWA_SMART && !workspace_is_visible(workspace))) {
             DLOG("Marking con = %p urgent\n", con);
             con_set_urgency(con, true);
             tree_render();
@@ -474,8 +453,6 @@ static void handle_screen_change(xcb_generic_event_t *e) {
     scratchpad_fix_resolution();
 
     ipc_send_event("output", I3_IPC_EVENT_OUTPUT, "{\"change\":\"unspecified\"}");
-
-    return;
 }
 
 /*
@@ -518,7 +495,7 @@ static void handle_unmap_notify_event(xcb_unmap_notify_event_t *event) {
     xcb_delete_property(conn, event->window, A__NET_WM_DESKTOP);
     xcb_delete_property(conn, event->window, A__NET_WM_STATE);
 
-    tree_close_internal(con, DONT_KILL_WINDOW, false, false);
+    tree_close_internal(con, DONT_KILL_WINDOW, false);
     tree_render();
 
 ignore_end:
@@ -659,7 +636,6 @@ static void handle_expose_event(xcb_expose_event_t *event) {
     draw_util_copy_surface(&(parent->frame_buffer), &(parent->frame),
                            0, 0, 0, 0, parent->rect.width, parent->rect.height);
     xcb_flush(conn);
-    return;
 }
 
 #define _NET_WM_MOVERESIZE_SIZE_TOPLEFT 0
@@ -800,21 +776,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
     } else if (event->type == A_I3_SYNC) {
         xcb_window_t window = event->data.data32[0];
         uint32_t rnd = event->data.data32[1];
-        DLOG("[i3 sync protocol] Sending random value %d back to X11 window 0x%08x\n", rnd, window);
-
-        void *reply = scalloc(32, 1);
-        xcb_client_message_event_t *ev = reply;
-
-        ev->response_type = XCB_CLIENT_MESSAGE;
-        ev->window = window;
-        ev->type = A_I3_SYNC;
-        ev->format = 32;
-        ev->data.data32[0] = window;
-        ev->data.data32[1] = rnd;
-
-        xcb_send_event(conn, false, window, XCB_EVENT_MASK_NO_EVENT, (char *)ev);
-        xcb_flush(conn);
-        free(reply);
+        sync_respond(window, rnd);
     } else if (event->type == A__NET_REQUEST_FRAME_EXTENTS) {
         /*
          * A client can request an estimate for the frame size which the window
@@ -834,7 +796,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
         Rect r = {
             config.default_border_width, /* left */
             config.default_border_width, /* right */
-            config.font.height + 5,      /* top */
+            render_deco_height(),        /* top */
             config.default_border_width  /* bottom */
         };
         xcb_change_property(
@@ -845,6 +807,18 @@ static void handle_client_message(xcb_client_message_event_t *event) {
             XCB_ATOM_CARDINAL, 32, 4,
             &r);
         xcb_flush(conn);
+    } else if (event->type == A_WM_CHANGE_STATE) {
+        /* http://tronche.com/gui/x/icccm/sec-4.html#s-4.1.4 */
+        if (event->data.data32[0] == XCB_ICCCM_WM_STATE_ICONIC) {
+            /* For compatiblity reasons, Wine will request iconic state and cannot ensure that the WM has agreed on it;
+             * immediately revert to normal to avoid being stuck in a paused state. */
+            DLOG("Client has requested iconic state, rejecting. (window = %d)\n", event->window);
+            long data[] = {XCB_ICCCM_WM_STATE_NORMAL, XCB_NONE};
+            xcb_change_property(conn, XCB_PROP_MODE_REPLACE, event->window,
+                                A_WM_STATE, A_WM_STATE, 32, 2, data);
+        } else {
+            DLOG("Not handling WM_CHANGE_STATE request. (window = %d, state = %d)\n", event->window, event->data.data32[0]);
+        }
     } else if (event->type == A__NET_CURRENT_DESKTOP) {
         /* This request is used by pagers and bars to change the current
          * desktop likely as a result of some user action. We interpret this as
@@ -906,7 +880,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
             if (event->data.data32[0])
                 last_timestamp = event->data.data32[0];
 
-            tree_close_internal(con, KILL_WINDOW, false, false);
+            tree_close_internal(con, KILL_WINDOW, false);
             tree_render();
         } else {
             DLOG("Couldn't find con for _NET_CLOSE_WINDOW request. (window = %d)\n", event->window);
@@ -935,7 +909,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
             case _NET_WM_MOVERESIZE_MOVE:
                 floating_drag_window(con->parent, &fake);
                 break;
-            case _NET_WM_MOVERESIZE_SIZE_TOPLEFT... _NET_WM_MOVERESIZE_SIZE_LEFT:
+            case _NET_WM_MOVERESIZE_SIZE_TOPLEFT ... _NET_WM_MOVERESIZE_SIZE_LEFT:
                 floating_resize_window(con->parent, false, &fake);
                 break;
             default:
@@ -976,8 +950,8 @@ static void handle_client_message(xcb_client_message_event_t *event) {
     }
 }
 
-bool handle_window_type(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                        xcb_atom_t atom, xcb_get_property_reply_t *reply) {
+static bool handle_window_type(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
+                               xcb_atom_t atom, xcb_get_property_reply_t *reply) {
     Con *con;
     if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
         return false;
@@ -1001,123 +975,14 @@ static bool handle_normal_hints(void *data, xcb_connection_t *conn, uint8_t stat
         return false;
     }
 
-    xcb_size_hints_t size_hints;
+    bool changed = window_update_normal_hints(con->window, reply, NULL);
 
-    /* If the hints were already in this event, use them, if not, request them */
-    if (reply != NULL) {
-        xcb_icccm_get_wm_size_hints_from_reply(&size_hints, reply);
-    } else {
-        xcb_icccm_get_wm_normal_hints_reply(conn, xcb_icccm_get_wm_normal_hints_unchecked(conn, con->window->id), &size_hints, NULL);
-    }
-
-    int win_width = con->window_rect.width;
-    int win_height = con->window_rect.height;
-
-    if ((size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE)) {
-        DLOG("Minimum size: %d (width) x %d (height)\n", size_hints.min_width, size_hints.min_height);
-
-        con->window->min_width = size_hints.min_width;
-        con->window->min_height = size_hints.min_height;
-    }
-
-    if (con_is_floating(con)) {
-        win_width = MAX(win_width, con->window->min_width);
-        win_height = MAX(win_height, con->window->min_height);
-    }
-
-    bool changed = false;
-    if ((size_hints.flags & XCB_ICCCM_SIZE_HINT_P_RESIZE_INC)) {
-        if (size_hints.width_inc > 0 && size_hints.width_inc < 0xFFFF) {
-            if (con->window->width_increment != size_hints.width_inc) {
-                con->window->width_increment = size_hints.width_inc;
-                changed = true;
-            }
-        }
-
-        if (size_hints.height_inc > 0 && size_hints.height_inc < 0xFFFF) {
-            if (con->window->height_increment != size_hints.height_inc) {
-                con->window->height_increment = size_hints.height_inc;
-                changed = true;
-            }
-        }
-
-        if (changed) {
-            DLOG("resize increments changed\n");
-        }
-    }
-
-    bool has_base_size = false;
-    int base_width = 0;
-    int base_height = 0;
-
-    /* The base width / height is the desired size of the window. */
-    if (size_hints.flags & XCB_ICCCM_SIZE_HINT_BASE_SIZE) {
-        base_width = size_hints.base_width;
-        base_height = size_hints.base_height;
-        has_base_size = true;
-    }
-
-    /* If the window didn't specify a base size, the ICCCM tells us to fall
-     * back to the minimum size instead, if available. */
-    if (!has_base_size && size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) {
-        base_width = size_hints.min_width;
-        base_height = size_hints.min_height;
-    }
-
-    // TODO XXX Should we only do this is the base size is > 0?
-    if (base_width != con->window->base_width || base_height != con->window->base_height) {
-        con->window->base_width = base_width;
-        con->window->base_height = base_height;
-
-        DLOG("client's base_height changed to %d\n", base_height);
-        DLOG("client's base_width changed to %d\n", base_width);
-        changed = true;
-    }
-
-    /* If no aspect ratio was set or if it was invalid, we ignore the hints */
-    if (!(size_hints.flags & XCB_ICCCM_SIZE_HINT_P_ASPECT) ||
-        (size_hints.min_aspect_num <= 0) ||
-        (size_hints.min_aspect_den <= 0)) {
-        goto render_and_return;
-    }
-
-    /* The ICCCM says to subtract the base size from the window size for aspect
-     * ratio calculations. However, unlike determining the base size itself we
-     * must not fall back to using the minimum size in this case according to
-     * the ICCCM. */
-    double width = win_width - base_width * has_base_size;
-    double height = win_height - base_height * has_base_size;
-
-    /* Convert numerator/denominator to a double */
-    double min_aspect = (double)size_hints.min_aspect_num / size_hints.min_aspect_den;
-    double max_aspect = (double)size_hints.max_aspect_num / size_hints.min_aspect_den;
-
-    DLOG("Aspect ratio set: minimum %f, maximum %f\n", min_aspect, max_aspect);
-    DLOG("width = %f, height = %f\n", width, height);
-
-    /* Sanity checks, this is user-input, in a way */
-    if (max_aspect <= 0 || min_aspect <= 0 || height == 0 || (width / height) <= 0) {
-        goto render_and_return;
-    }
-
-    /* Check if we need to set proportional_* variables using the correct ratio */
-    double aspect_ratio = 0.0;
-    if ((width / height) < min_aspect) {
-        aspect_ratio = min_aspect;
-    } else if ((width / height) > max_aspect) {
-        aspect_ratio = max_aspect;
-    } else {
-        goto render_and_return;
-    }
-
-    if (fabs(con->window->aspect_ratio - aspect_ratio) > DBL_EPSILON) {
-        con->window->aspect_ratio = aspect_ratio;
-        changed = true;
-    }
-
-render_and_return:
     if (changed) {
-        tree_render();
+        Con *floating = con_inside_floating(con);
+        if (floating) {
+            floating_check_size(con, false);
+            tree_render();
+        }
     }
 
     FREE(reply);
@@ -1163,8 +1028,7 @@ static bool handle_transient_for(void *data, xcb_connection_t *conn, uint8_t sta
     }
 
     if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn,
-                                                                       false, window, XCB_ATOM_WM_TRANSIENT_FOR, XCB_ATOM_WINDOW, 0, 32),
+        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, XCB_ATOM_WM_TRANSIENT_FOR, XCB_ATOM_WINDOW, 0, 32),
                                       NULL);
         if (prop == NULL)
             return false;
@@ -1187,8 +1051,7 @@ static bool handle_clientleader_change(void *data, xcb_connection_t *conn, uint8
         return false;
 
     if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn,
-                                                                       false, window, A_WM_CLIENT_LEADER, XCB_ATOM_WINDOW, 0, 32),
+        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, A_WM_CLIENT_LEADER, XCB_ATOM_WINDOW, 0, 32),
                                       NULL);
         if (prop == NULL)
             return false;
@@ -1207,6 +1070,14 @@ static bool handle_clientleader_change(void *data, xcb_connection_t *conn, uint8
  */
 static void handle_focus_in(xcb_focus_in_event_t *event) {
     DLOG("focus change in, for window 0x%08x\n", event->event);
+
+    if (event->event == root) {
+        DLOG("Received focus in for root window, refocusing the focused window.\n");
+        con_focus(focused);
+        focused_id = XCB_NONE;
+        x_push_changes(croot);
+    }
+
     Con *con;
     if ((con = con_by_window_id(event->event)) == NULL || con->window == NULL)
         return;
@@ -1249,7 +1120,6 @@ static void handle_focus_in(xcb_focus_in_event_t *event) {
     /* We update focused_id because we don’t need to set focus again */
     focused_id = event->event;
     tree_render();
-    return;
 }
 
 /*
@@ -1281,8 +1151,7 @@ static bool handle_class_change(void *data, xcb_connection_t *conn, uint8_t stat
         return false;
 
     if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn,
-                                                                       false, window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 0, 32),
+        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 0, 32),
                                       NULL);
 
         if (prop == NULL)
@@ -1305,8 +1174,7 @@ static bool handle_motif_hints_change(void *data, xcb_connection_t *conn, uint8_
         return false;
 
     if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn,
-                                                                       false, window, A__MOTIF_WM_HINTS, XCB_GET_PROPERTY_TYPE_ANY, 0, 5 * sizeof(uint64_t)),
+        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, A__MOTIF_WM_HINTS, XCB_GET_PROPERTY_TYPE_ANY, 0, 5 * sizeof(uint64_t)),
                                       NULL);
 
         if (prop == NULL)
@@ -1456,7 +1324,7 @@ static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom)
     struct property_handler_t *handler = NULL;
     xcb_get_property_reply_t *propr = NULL;
 
-    for (size_t c = 0; c < sizeof(property_handlers) / sizeof(struct property_handler_t); c++) {
+    for (size_t c = 0; c < NUM_HANDLERS; c++) {
         if (property_handlers[c].atom != atom)
             continue;
 
@@ -1487,7 +1355,7 @@ static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom)
 void handle_event(int type, xcb_generic_event_t *event) {
     if (type != XCB_MOTION_NOTIFY)
         DLOG("event type %d, xkb_base %d\n", type, xkb_base);
-    
+
     if (randr_base > -1 &&
         type == randr_base + XCB_RANDR_SCREEN_CHANGE_NOTIFY) {
         handle_screen_change(event);
@@ -1538,17 +1406,38 @@ void handle_event(int type, xcb_generic_event_t *event) {
                 ipc_send_event("key_press", I3_IPC_EVENT_KEY_PRESS, message);
                 free(message);
             }
-            
+
             if (xkb_current_group == state->group)
                 return;
             xkb_current_group = state->group;
             ungrab_all_keys(conn);
             grab_all_keys(conn);
         }
-        
+
         return;
     }
-    
+
+    if (shape_supported && type == shape_base + XCB_SHAPE_NOTIFY) {
+        xcb_shape_notify_event_t *shape = (xcb_shape_notify_event_t *)event;
+
+        DLOG("shape_notify_event for window 0x%08x, shape_kind = %d, shaped = %d\n",
+             shape->affected_window, shape->shape_kind, shape->shaped);
+
+        Con *con = con_by_window_id(shape->affected_window);
+        if (con == NULL) {
+            LOG("Not a managed window 0x%08x, ignoring shape_notify_event\n",
+                shape->affected_window);
+            return;
+        }
+
+        if (shape->shape_kind == XCB_SHAPE_SK_BOUNDING ||
+            shape->shape_kind == XCB_SHAPE_SK_INPUT) {
+            x_set_shape(con, shape->shape_kind, shape->shaped);
+        }
+
+        return;
+    }
+
     switch (type) {
         case XCB_KEY_PRESS:
         case XCB_KEY_RELEASE:

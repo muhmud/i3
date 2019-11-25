@@ -201,6 +201,13 @@ struct Config {
      * decoration. Marks starting with a "_" will be ignored either way. */
     bool show_marks;
 
+    /** Title alignment options. */
+    enum {
+        ALIGN_LEFT,
+        ALIGN_CENTER,
+        ALIGN_RIGHT
+    } title_align;
+
     /** The default border style for new windows. */
     border_style_t default_border;
 
@@ -289,16 +296,7 @@ struct Barconfig {
            S_SHOW = 1 } hidden_state;
 
     /** Bar modifier (to show bar when in hide mode). */
-    enum {
-        M_NONE = 0,
-        M_CONTROL = 1,
-        M_SHIFT = 2,
-        M_MOD1 = 3,
-        M_MOD2 = 4,
-        M_MOD3 = 5,
-        M_MOD4 = 6,
-        M_MOD5 = 7
-    } modifier;
+    uint32_t modifier;
 
     TAILQ_HEAD(bar_bindings_head, Barbinding)
     bar_bindings;
@@ -330,6 +328,10 @@ struct Barconfig {
     /** Strip workspace numbers? Configuration option is
      * 'strip_workspace_numbers yes'. */
     bool strip_workspace_numbers;
+
+    /** Strip workspace name? Configuration option is
+     * 'strip_workspace_name yes'. */
+    bool strip_workspace_name;
 
     /** Hide mode button? Configuration option is 'binding_mode_indicator no'
      * but we invert the bool for the same reason as hide_workspace_buttons.*/
@@ -398,28 +400,24 @@ struct tray_output_t {
     tray_outputs;
 };
 
-/**
- * Finds the configuration file to use (either the one specified by
- * override_configpath), the user’s one or the system default) and calls
- * parse_file().
- *
- * If you specify override_configpath, only this path is used to look for a
- * configuration file.
- *
- * If use_nagbar is false, don't try to start i3-nagbar but log the errors to
- * stdout/stderr instead.
- *
- */
-bool parse_configuration(const char *override_configpath, bool use_nagbar);
+typedef enum {
+    C_VALIDATE,
+    C_LOAD,
+    C_RELOAD,
+} config_load_t;
 
 /**
- * Reads the configuration from ~/.i3/config or /etc/i3/config if not found.
+ * (Re-)loads the configuration file (sets useful defaults before).
  *
  * If you specify override_configpath, only this path is used to look for a
  * configuration file.
  *
+ * load_type specifies the type of loading: C_VALIDATE is used to only verify
+ * the correctness of the config file (used with the flag -C). C_LOAD will load
+ * the config for normal use and display errors in the nagbar. C_RELOAD will
+ * also clear the previous config.
  */
-void load_configuration(xcb_connection_t *conn, const char *override_configfile, bool reload);
+bool load_configuration(const char *override_configfile, config_load_t load_type);
 
 /**
  * Ungrabs all keys, to be called before re-grabbing the keys because of a
@@ -432,15 +430,4 @@ void ungrab_all_keys(xcb_connection_t *conn);
  * Sends the current bar configuration as an event to all barconfig_update listeners.
  *
  */
-void update_barconfig();
-
-/**
- * Kills the configerror i3-nagbar process, if any.
- *
- * Called when reloading/restarting.
- *
- * If wait_for_it is set (restarting), this function will waitpid(), otherwise,
- * ev is assumed to handle it (reloading).
- *
- */
-void kill_configerror_nagbar(bool wait_for_it);
+void update_barconfig(void);

@@ -34,7 +34,7 @@ static void read_server_x11_packet_cb(EV_P_ ev_io *w, int revents);
 
 static char *sun_path = NULL;
 
-void cleanup_socket(void) {
+static void cleanup_socket(void) {
     if (sun_path != NULL) {
         unlink(sun_path);
         free(sun_path);
@@ -402,7 +402,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (optind >= argc) {
-        errx(EXIT_FAILURE, "syntax: %s [options] <command>\n", argv[0]);
+        errx(EXIT_FAILURE, "syntax: %s [options] <command>", argv[0]);
     }
 
     int fd = socket(AF_LOCAL, SOCK_STREAM, 0);

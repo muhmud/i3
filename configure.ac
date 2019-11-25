@@ -2,7 +2,7 @@
 # Run autoreconf -fi to generate a configure script from this file.
 
 AC_PREREQ([2.69])
-AC_INIT([i3], [4.15], [https://github.com/i3/i3/issues])
+AC_INIT([i3], [4.17.1], [https://github.com/i3/i3/issues])
 # For AX_EXTEND_SRCDIR
 AX_ENABLE_BUILDDIR
 AM_INIT_AUTOMAKE([foreign subdir-objects -Wall no-dist-gzip dist-bzip2])
@@ -32,7 +32,7 @@ AX_EXTEND_SRCDIR
 AS_IF([test -d ${srcdir}/.git],
       [
         VERSION="$(git -C ${srcdir} describe --tags --abbrev=0)"
-        I3_VERSION="$(git -C ${srcdir} describe --tags --always) ($(git -C ${srcdir} log --pretty=format:%cd --date=short -n1), branch \\\"$(git -C ${srcdir} describe --tags --always --all | sed s:heads/::)\\\")"
+        I3_VERSION="$(git -C ${srcdir} describe --tags --always) ($(git -C ${srcdir} rev-list --format=%cd --date=short -n1 $(git rev-parse HEAD) | tail -n1), branch \\\"$(git -C ${srcdir} describe --tags --always --all | sed s:heads/::)\\\")"
         # Mirrors what libi3/is_debug_build.c does:
         is_release=$(test $(echo "${I3_VERSION}" | cut -d '(' -f 1 | wc -m) -lt 10 && echo yes || echo no)
       ],
@@ -81,16 +81,17 @@ AC_SEARCH_LIBS([floor], [m], , [AC_MSG_FAILURE([cannot find the required floor()
 # libev does not ship with a pkg-config file :(.
 AC_SEARCH_LIBS([ev_run], [ev], , [AC_MSG_FAILURE([cannot find the required ev_run() function despite trying to link with -lev])])
 
-AC_SEARCH_LIBS([shm_open], [rt])
+AC_SEARCH_LIBS([shm_open], [rt], [], [], [-pthread])
 
-AC_SEARCH_LIBS([iconv_open], [iconv], , [AC_MSG_FAILURE([cannot find the required iconv_open() function despite trying to link with -liconv])])
+AC_SEARCH_LIBS([iconv_open], [iconv], ,
+AC_SEARCH_LIBS([libiconv_open], [iconv], , [AC_MSG_FAILURE([cannot find the required iconv_open() function despite trying to link with -liconv])]))
 
 AX_PTHREAD
 
 dnl Each prefix corresponds to a source tarball which users might have
 dnl downloaded in a newer version and would like to overwrite.
 PKG_CHECK_MODULES([LIBSN], [libstartup-notification-1.0])
-PKG_CHECK_MODULES([XCB], [xcb xcb-xkb xcb-xinerama xcb-randr])
+PKG_CHECK_MODULES([XCB], [xcb xcb-xkb xcb-xinerama xcb-randr xcb-shape])
 PKG_CHECK_MODULES([XCB_UTIL], [xcb-event xcb-util])
 PKG_CHECK_MODULES([XCB_UTIL_CURSOR], [xcb-cursor])
 PKG_CHECK_MODULES([XCB_UTIL_KEYSYMS], [xcb-keysyms])
@@ -100,6 +101,7 @@ PKG_CHECK_MODULES([XKBCOMMON], [xkbcommon xkbcommon-x11])
 PKG_CHECK_MODULES([YAJL], [yajl])
 PKG_CHECK_MODULES([LIBPCRE], [libpcre >= 8.10])
 PKG_CHECK_MODULES([PANGOCAIRO], [cairo >= 1.14.4 pangocairo])
+PKG_CHECK_MODULES([GLIBGOBJECT], [glib-2.0 gobject-2.0])
 
 # Checks for programs.
 AC_PROG_AWK
@@ -109,12 +111,27 @@ AC_PROG_MAKE_SET
 AC_PROG_RANLIB
 AC_PROG_LN_S
 
-AC_PATH_PROG([PATH_ASCIIDOC], [asciidoc])
-AC_PATH_PROG([PATH_XMLTO], [xmlto])
-AC_PATH_PROG([PATH_POD2MAN], [pod2man])
-
-AM_CONDITIONAL([BUILD_MANS], [test x$PATH_ASCIIDOC != x && test x$PATH_XMLTO != x && test x$PATH_POD2MAN != x])
-AM_CONDITIONAL([BUILD_DOCS], [test x$PATH_ASCIIDOC != x])
+AC_ARG_ENABLE(docs,
+  AS_HELP_STRING(
+    [--disable-docs],
+    [disable building documentation]),
+  [ax_docs=$enableval],
+  [ax_docs=yes])
+AC_ARG_ENABLE(mans,
+  AS_HELP_STRING(
+    [--disable-mans],
+    [disable building manual pages]),
+  [ax_mans=$enableval],
+  [ax_mans=yes])
+AS_IF([test x$ax_docs = xyes || test x$ax_mans = xyes], [
+  AC_PATH_PROG([PATH_ASCIIDOC], [asciidoc])
+])
+AS_IF([test x$ax_mans = xyes], [
+  AC_PATH_PROG([PATH_XMLTO], [xmlto])
+  AC_PATH_PROG([PATH_POD2MAN], [pod2man])
+])
+AM_CONDITIONAL([BUILD_MANS], [test x$ax_mans = xyes && test x$PATH_ASCIIDOC != x && test x$PATH_XMLTO != x && test x$PATH_POD2MAN != x])
+AM_CONDITIONAL([BUILD_DOCS], [test x$ax_docs = xyes && test x$PATH_ASCIIDOC != x])
 
 AM_PROG_AR
 

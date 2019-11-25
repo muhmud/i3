@@ -217,7 +217,7 @@ static char **add_argument(char **original, char *opt_char, char *opt_arg, char 
 #define y(x, ...) yajl_gen_##x(gen, ##__VA_ARGS__)
 #define ystr(str) yajl_gen_string(gen, (unsigned char *)str, strlen(str))
 
-char *store_restart_layout(void) {
+static char *store_restart_layout(void) {
     setlocale(LC_NUMERIC, "C");
     yajl_gen gen = yajl_gen_alloc(NULL);
 
@@ -287,7 +287,7 @@ void i3_restart(bool forget_layout) {
 
     restore_geometry();
 
-    ipc_shutdown(SHUTDOWN_REASON_RESTART);
+    ipc_shutdown(SHUTDOWN_REASON_RESTART, -1);
 
     LOG("restarting \"%s\"...\n", start_argv[0]);
     /* make sure -a is in the argument list or add it */
@@ -465,7 +465,7 @@ void kill_nagbar(pid_t *nagbar_pid, bool wait_for_it) {
  * if the number could be parsed.
  */
 bool parse_long(const char *str, long *out, int base) {
-    char *end;
+    char *end = NULL;
     long result = strtol(str, &end, base);
     if (result == LONG_MIN || result == LONG_MAX || result < 0 || (end != NULL && *end != '\0')) {
         *out = result;
@@ -501,9 +501,16 @@ ssize_t slurp(const char *path, char **buf) {
     fclose(f);
     if ((ssize_t)n != stbuf.st_size) {
         ELOG("File \"%s\" could not be read entirely: got %zd, want %" PRIi64 "\n", path, n, (int64_t)stbuf.st_size);
-        free(*buf);
-        *buf = NULL;
+        FREE(*buf);
         return -1;
     }
     return (ssize_t)n;
+}
+
+/*
+ * Convert a direction to its corresponding orientation.
+ *
+ */
+orientation_t orientation_from_direction(direction_t direction) {
+    return (direction == D_LEFT || direction == D_RIGHT) ? HORIZ : VERT;
 }

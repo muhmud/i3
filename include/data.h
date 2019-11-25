@@ -477,8 +477,18 @@ struct Window {
     int min_width;
     int min_height;
 
+    /* Maximum size specified for the window. */
+    int max_width;
+    int max_height;
+
     /* aspect ratio from WM_NORMAL_HINTS (MPlayer uses this for example) */
-    double aspect_ratio;
+    double min_aspect_ratio;
+    double max_aspect_ratio;
+
+    /** The window has a nonrectangular shape. */
+    bool shaped;
+    /** The window has a nonrectangular input shape. */
+    bool input_shaped;
 };
 
 /**
@@ -573,7 +583,7 @@ struct Assignment {
     /** the criteria to check if a window matches */
     Match match;
 
-    /** destination workspace/command, depending on the type */
+    /** destination workspace/command/output, depending on the type */
     union {
         char *command;
         char *workspace;

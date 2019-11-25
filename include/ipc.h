@@ -35,6 +35,12 @@ typedef struct ipc_client {
      * event has been sent by i3. */
     bool first_tick_sent;
 
+    struct ev_io *read_callback;
+    struct ev_io *write_callback;
+    struct ev_timer *timeout;
+    uint8_t *buffer;
+    size_t buffer_size;
+
     TAILQ_ENTRY(ipc_client)
     clients;
 } ipc_client;
@@ -49,12 +55,12 @@ typedef struct ipc_client {
  * message_type is the type of the message as the sender specified it.
  *
  */
-typedef void (*handler_t)(int, uint8_t *, int, uint32_t, uint32_t);
+typedef void (*handler_t)(ipc_client *, uint8_t *, int, uint32_t, uint32_t);
 
 /* Macro to declare a callback */
-#define IPC_HANDLER(name)                                      \
-    static void handle_##name(int fd, uint8_t *message,        \
-                              int size, uint32_t message_size, \
+#define IPC_HANDLER(name)                                           \
+    static void handle_##name(ipc_client *client, uint8_t *message, \
+                              int size, uint32_t message_size,      \
                               uint32_t message_type)
 
 /**
@@ -65,6 +71,16 @@ typedef void (*handler_t)(int, uint8_t *, int, uint32_t, uint32_t);
  *
  */
 void ipc_new_client(EV_P_ struct ev_io *w, int revents);
+
+/**
+ * ipc_new_client_on_fd() only sets up the event handler
+ * for activity on the new connection and inserts the file descriptor into
+ * the list of clients.
+ *
+ * This variant is useful for the inherited IPC connection when restarting.
+ *
+ */
+ipc_client *ipc_new_client_on_fd(EV_P_ int fd);
 
 /**
  * Creates the UNIX domain socket at the given path, sets it to non-blocking
@@ -89,10 +105,13 @@ typedef enum {
 } shutdown_reason_t;
 
 /**
- * Calls shutdown() on each socket and closes it.
+ * Calls shutdown() on each socket and closes it. This function is to be called
+ * when exiting or restarting only!
+ *
+ * exempt_fd is never closed. Set to -1 to close all fds.
  *
  */
-void ipc_shutdown(shutdown_reason_t reason);
+void ipc_shutdown(shutdown_reason_t reason, int exempt_fd);
 
 void dump_node(yajl_gen gen, Con *con, bool inplace_restart);
 
@@ -124,3 +143,14 @@ void ipc_send_barconfig_update_event(Barconfig *barconfig);
  * For the binding events, we send the serialized binding struct.
  */
 void ipc_send_binding_event(const char *event_type, Binding *bind);
+
+/**
+  * Set the maximum duration that we allow for a connection with an unwriteable
+  * socket.
+  */
+void ipc_set_kill_timeout(ev_tstamp new);
+
+/**
+ * Sends a restart reply to the IPC client on the specified fd.
+ */
+void ipc_confirm_restart(ipc_client *client);

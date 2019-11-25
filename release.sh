@@ -1,9 +1,9 @@
 #!/bin/zsh
 # This script is used to prepare a new release of i3.
 
-export RELEASE_VERSION="4.14.1"
-export PREVIOUS_VERSION="4.14"
-export RELEASE_BRANCH="master"
+export RELEASE_VERSION="4.16"
+export PREVIOUS_VERSION="4.15"
+export RELEASE_BRANCH="next"
 
 if [ ! -e "../i3.github.io" ]
 then
@@ -85,12 +85,12 @@ if [ "${RELEASE_BRANCH}" = "master" ]; then
 	git checkout master
 	git merge --no-ff release-${RELEASE_VERSION} -m "Merge branch 'release-${RELEASE_VERSION}'"
 	git checkout next
-	git merge --no-ff -X ours master -m "Merge branch 'master' into next"
+	git merge --no-ff -s recursive -X ours -X no-renames master -m "Merge branch 'master' into next"
 else
 	git checkout next
 	git merge --no-ff release-${RELEASE_VERSION} -m "Merge branch 'release-${RELEASE_VERSION}'"
 	git checkout master
-	git merge --no-ff -X theirs next -m "Merge branch 'next' into master"
+	git merge --no-ff -s recursive -X theirs -X no-renames next -m "Merge branch 'next' into master"
 fi
 
 git remote remove origin
@@ -126,6 +126,7 @@ WORKDIR /usr/src
 RUN mk-build-deps --install --remove --tool 'apt-get --no-install-recommends -y' i3-${RELEASE_VERSION}/debian/control
 WORKDIR /usr/src/i3-${RELEASE_VERSION}
 RUN dpkg-buildpackage -sa -j8
+RUN dpkg-buildpackage -S -sa -j8
 EOT
 
 CONTAINER_NAME=$(echo "i3-${TMPDIR}" | sed 's,/,,g')
@@ -139,7 +140,7 @@ echo "Content of resulting package’s .changes file:"
 cat ${TMPDIR}/debian/*.changes
 
 # debsign is in devscripts, which is available in fedora and debian
-debsign -k4AC8EE1D ${TMPDIR}/debian/*.changes
+debsign --no-re-sign -k4AC8EE1D ${TMPDIR}/debian/*.changes
 
 # TODO: docker cleanup
 
@@ -154,6 +155,12 @@ git checkout ${RELEASE_BRANCH}
 cd ${TMPDIR}
 git clone --quiet ${STARTDIR}/../i3.github.io
 cd i3.github.io
+
+mkdir docs/${PREVIOUS_VERSION}
+tar cf - '--exclude=[0-9]\.[0-9e]*' docs | tar xf - --strip-components=1 -C docs/${PREVIOUS_VERSION}
+git add docs/${PREVIOUS_VERSION}
+git commit -a -m "save docs for ${PREVIOUS_VERSION}"
+
 cp ${TMPDIR}/i3/i3-${RELEASE_VERSION}.tar.bz2* downloads/
 git add downloads/i3-${RELEASE_VERSION}.tar.bz2*
 cp ${TMPDIR}/i3/RELEASE-NOTES-${RELEASE_VERSION} downloads/RELEASE-NOTES-${RELEASE_VERSION}.txt
@@ -164,11 +171,6 @@ sed -i "s,The current stable version is .*$,The current stable version is ${RELE
 sed -i "s,<tbody>,<tbody>\n  <tr>\n    <td>${RELEASE_VERSION}</td>\n    <td><a href=\"/downloads/i3-${RELEASE_VERSION}.tar.bz2\">i3-${RELEASE_VERSION}.tar.bz2</a></td>\n    <td>$(LC_ALL=en_US.UTF-8 ls -lh ../i3/i3-${RELEASE_VERSION}.tar.bz2 | awk -F " " {'print $5'} | sed 's/K$/ KiB/g' | sed 's/M$/ MiB/g')</td>\n    <td><a href=\"/downloads/i3-${RELEASE_VERSION}.tar.bz2.asc\">signature</a></td>\n    <td>$(date +'%Y-%m-%d')</td>\n    <td><a href=\"/downloads/RELEASE-NOTES-${RELEASE_VERSION}.txt\">release notes</a></td>\n  </tr>\n,g" downloads/index.html
 
 git commit -a -m "add ${RELEASE_VERSION} release"
-
-mkdir docs/${PREVIOUS_VERSION}
-tar cf - '--exclude=[0-9]\.[0-9e]*' docs | tar xf - --strip-components=1 -C docs/${PREVIOUS_VERSION}
-git add docs/${PREVIOUS_VERSION}
-git commit -a -m "save docs for ${PREVIOUS_VERSION}"
 
 for i in $(find _docs -maxdepth 1 -and -type f -and \! -regex ".*\.\(html\|man\)$" -and \! -name "Makefile")
 do
@@ -227,7 +229,7 @@ echo "  cd ${TMPDIR}/i3.github.io"
 echo "  git push"
 echo ""
 echo "  cd ${TMPDIR}/debian"
-echo "  dput *.changes"
+echo "  dput"
 echo ""
 echo "  cd ${TMPDIR}"
 echo "  sendmail -t < email.txt"

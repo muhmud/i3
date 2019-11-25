@@ -25,6 +25,34 @@
 #define NET_WM_DESKTOP_ALL 0xFFFFFFFF
 
 /**
+ * Stores a copy of the name of the last used workspace for the workspace
+ * back-and-forth switching.
+ *
+ */
+extern char *previous_workspace_name;
+
+/**
+ * Returns the workspace with the given name or NULL if such a workspace does
+ * not exist.
+ *
+ */
+Con *get_existing_workspace_by_name(const char *name);
+
+/**
+ * Returns the workspace with the given number or NULL if such a workspace does
+ * not exist.
+ *
+ */
+Con *get_existing_workspace_by_num(int num);
+
+/**
+ * Returns true if the first output assigned to a workspace with the given
+ * workspace assignment is the same as the given output.
+ *
+ */
+bool output_triggers_assignment(Output *output, struct Workspace_Assignment *assignment);
+
+/**
  * Returns a pointer to the workspace with the given number (starting at 0),
  * creating the workspace if necessary (by allocating the necessary amount of
  * memory and initializing the data structures correctly).
@@ -190,7 +218,6 @@ Con *workspace_encapsulate(Con *ws);
 
 /**
  * Move the given workspace to the specified output.
- * This returns true if and only if moving the workspace was successful.
  *
  */
-bool workspace_move_to_output(Con *ws, const char *output);
+void workspace_move_to_output(Con *ws, Output *output);
