@@ -2670,12 +2670,12 @@ bool con_swap(Con *first, Con *second) {
      * correct functions. */
     fullscreen_mode_t second_fullscreen_mode = second->fullscreen_mode;
     if (first->fullscreen_mode == CF_NONE) {
-        con_disable_fullscreen(second);
+        con_disable_fullscreen(second, 0);
     } else {
         con_enable_fullscreen(second, first->fullscreen_mode);
     }
     if (second_fullscreen_mode == CF_NONE) {
-        con_disable_fullscreen(first);
+        con_disable_fullscreen(first, 0);
     } else {
         con_enable_fullscreen(first, second_fullscreen_mode);
     }
