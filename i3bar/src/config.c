@@ -9,16 +9,14 @@
  */
 #include "common.h"
 
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
-#include <i3/ipc.h>
-#include <yajl/yajl_parse.h>
-#include <yajl/yajl_version.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <X11/Xlib.h>
+#include <yajl/yajl_parse.h>
 
+config_t config;
 static char *cur_key;
 static bool parsing_bindings;
 static bool parsing_tray_outputs;
@@ -342,6 +340,12 @@ static int config_integer_cb(void *params_, long long val) {
     if (!strcmp(cur_key, "modifier")) {
         DLOG("modifier = %lld\n", val);
         config.modifier = (uint32_t)val;
+        return 1;
+    }
+
+    if (!strcmp(cur_key, "workspace_min_width")) {
+        DLOG("workspace_min_width = %lld\n", val);
+        config.ws_min_width = val;
         return 1;
     }
 

@@ -9,9 +9,6 @@
  */
 #include "all.h"
 
-#include <float.h>
-#include <stdarg.h>
-
 /*******************************************************************************
  * Criteria functions.
  ******************************************************************************/
@@ -128,7 +125,7 @@ CFGFUN(enter_mode, const char *pango_markup, const char *modename) {
     }
 
     struct Mode *mode;
-    SLIST_FOREACH(mode, &modes, modes) {
+    SLIST_FOREACH (mode, &modes, modes) {
         if (strcmp(mode->name, modename) == 0) {
             ELOG("The binding mode with name \"%s\" is defined at least twice.\n", modename);
         }
@@ -268,6 +265,8 @@ CFGFUN(disable_randr15, const char *value) {
 CFGFUN(focus_wrapping, const char *value) {
     if (strcmp(value, "force") == 0) {
         config.focus_wrapping = FOCUS_WRAPPING_FORCE;
+    } else if (strcmp(value, "workspace") == 0) {
+        config.focus_wrapping = FOCUS_WRAPPING_WORKSPACE;
     } else if (eval_boolstr(value)) {
         config.focus_wrapping = FOCUS_WRAPPING_ON;
     } else {
@@ -346,7 +345,7 @@ CFGFUN(workspace, const char *workspace, const char *output) {
     if (workspace) {
         FREE(current_workspace);
 
-        TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
+        TAILQ_FOREACH (assignment, &ws_assignments, ws_assignments) {
             if (strcasecmp(assignment->name, workspace) == 0) {
                 ELOG("You have a duplicate workspace assignment for workspace \"%s\"\n",
                      workspace);
@@ -540,7 +539,7 @@ static void bar_configure_binding(const char *button, const char *release, const
     const bool release_bool = release != NULL;
 
     struct Barbinding *current;
-    TAILQ_FOREACH(current, &(current_bar->bar_bindings), bindings) {
+    TAILQ_FOREACH (current, &(current_bar->bar_bindings), bindings) {
         if (current->input_code == input_code && current->release == release_bool) {
             ELOG("command for button %s was already specified, ignoring.\n", button);
             return;
@@ -644,6 +643,10 @@ CFGFUN(bar_binding_mode_indicator, const char *value) {
 
 CFGFUN(bar_workspace_buttons, const char *value) {
     current_bar->hide_workspace_buttons = !eval_boolstr(value);
+}
+
+CFGFUN(bar_workspace_min_width, const long width) {
+    current_bar->workspace_min_width = width;
 }
 
 CFGFUN(bar_strip_workspace_numbers, const char *value) {

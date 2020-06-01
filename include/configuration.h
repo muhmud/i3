@@ -12,9 +12,6 @@
  */
 #pragma once
 
-#include "libi3.h"
-
-#include <stdbool.h>
 #include "queue.h"
 #include "i3.h"
 
@@ -325,6 +322,9 @@ struct Barconfig {
      * zero. */
     bool hide_workspace_buttons;
 
+    /** The minimal width for workspace buttons. */
+    int workspace_min_width;
+
     /** Strip workspace numbers? Configuration option is
      * 'strip_workspace_numbers yes'. */
     bool strip_workspace_numbers;
@@ -425,9 +425,3 @@ bool load_configuration(const char *override_configfile, config_load_t load_type
  *
  */
 void ungrab_all_keys(xcb_connection_t *conn);
-
-/**
- * Sends the current bar configuration as an event to all barconfig_update listeners.
- *
- */
-void update_barconfig(void);

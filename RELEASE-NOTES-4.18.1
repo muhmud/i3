@@ -1,22 +1,25 @@
 
  ┌──────────────────────────────┐
- │ Release notes for i3 v4.17.1 │
+ │ Release notes for i3 v4.18.1 │
  └──────────────────────────────┘
 
-This is i3 v4.17.1. This version is considered stable. All users of i3 are
+This is i3 v4.18.1. This version is considered stable. All users of i3 are
 strongly encouraged to upgrade.
 
-This is a bugfix release for v4.17
+This is a bugfix release for v4.18.
 
  ┌────────────────────────────┐
  │ Bugfixes                   │
  └────────────────────────────┘
 
-  • unset _I3_RESTART_FD after restart (fixes crashes on restart)
-  • default config: immediately refresh i3status after volume changes
-  • default config: add XF86AudioMicMute
-  • default config: mention loginctl lock-session alongside xss-lock
-  • default config: use workspace number, not just workspace
+  • Move parent nodes in scratchpad correctly
+  • i3bar: Call cont_child() more liberally
+  • Fix load_layout crash when floating node doesn't have CT_FLOATING_CON parent
+  • Fix SEGFAULT when i3bar receives invalid input
+  • Revert "floating_reposition: avoid extra tree_render"
+  • Call tree_render if floating move changes workspace
+  • Update EWMH properties on workspace move
+  • cmd_focus_sibling: Fix crash on workspace level
 
  ┌────────────────────────────┐
  │ Thanks!                    │
@@ -24,6 +27,6 @@ This is a bugfix release for v4.17
 
 Thanks for testing, bugfixes, discussions and everything I forgot go out to:
 
-  David Shen
+  Heman Gandhi, Orestis Floros
 
--- Michael Stapelberg, 2019-08-30
+-- Michael Stapelberg, 2020-04-22
