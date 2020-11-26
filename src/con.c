@@ -305,7 +305,7 @@ void con_activate_unblock(Con *con) {
     Con *fullscreen_on_ws = con_get_fullscreen_covering_ws(ws);
 
     if (fullscreen_on_ws && fullscreen_on_ws != con && !con_has_parent(con, fullscreen_on_ws)) {
-        con_disable_fullscreen(fullscreen_on_ws);
+        con_disable_fullscreen(fullscreen_on_ws, 0);
     }
 
     con_activate(con);
