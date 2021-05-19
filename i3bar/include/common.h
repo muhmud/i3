@@ -9,7 +9,6 @@
 
 #include <config.h>
 
-#include <stdbool.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 #include "libi3.h"
@@ -17,7 +16,7 @@
 
 typedef struct rect_t rect;
 
-struct ev_loop *main_loop;
+extern struct ev_loop *main_loop;
 
 struct rect_t {
     int x;
@@ -61,6 +60,10 @@ struct status_block {
 
     bool urgent;
     bool no_separator;
+    uint32_t border_top;
+    uint32_t border_right;
+    uint32_t border_bottom;
+    uint32_t border_left;
     bool pango_markup;
 
     /* The amount of pixels necessary to render a separater after the block. */
@@ -77,7 +80,7 @@ struct status_block {
     TAILQ_ENTRY(status_block) blocks;
 };
 
-TAILQ_HEAD(statusline_head, status_block) statusline_head;
+extern TAILQ_HEAD(statusline_head, status_block) statusline_head;
 
 #include "child.h"
 #include "ipc.h"
@@ -88,5 +91,4 @@ TAILQ_HEAD(statusline_head, status_block) statusline_head;
 #include "trayclients.h"
 #include "xcb.h"
 #include "configuration.h"
-#include "libi3.h"
 #include "parse_json_header.h"

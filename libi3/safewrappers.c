@@ -7,13 +7,11 @@
  */
 #include "libi3.h"
 
-#include <string.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <err.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 /*
  * The s* functions (safe) are wrappers around malloc, strdup, …, which exits if one of
@@ -68,10 +66,9 @@ int sasprintf(char **strp, const char *fmt, ...) {
 
 ssize_t writeall(int fd, const void *buf, size_t count) {
     size_t written = 0;
-    ssize_t n = 0;
 
     while (written < count) {
-        n = write(fd, buf + written, count - written);
+        const ssize_t n = write(fd, ((char *)buf) + written, count - written);
         if (n == -1) {
             if (errno == EINTR || errno == EAGAIN)
                 continue;
@@ -83,6 +80,25 @@ ssize_t writeall(int fd, const void *buf, size_t count) {
     return written;
 }
 
+ssize_t writeall_nonblock(int fd, const void *buf, size_t count) {
+    size_t written = 0;
+
+    while (written < count) {
+        const ssize_t n = write(fd, ((char *)buf) + written, count - written);
+        if (n == -1) {
+            if (errno == EAGAIN) {
+                return written;
+            } else if (errno == EINTR) {
+                continue;
+            } else {
+                return n;
+            }
+        }
+        written += (size_t)n;
+    }
+    return written;
+}
+
 ssize_t swrite(int fd, const void *buf, size_t count) {
     ssize_t n;
 
@@ -91,4 +107,21 @@ ssize_t swrite(int fd, const void *buf, size_t count) {
         err(EXIT_FAILURE, "Failed to write %d", fd);
     else
         return n;
+}
+
+/*
+ * Like strcasecmp but considers the case where either string is NULL.
+ *
+ */
+int strcasecmp_nullable(const char *a, const char *b) {
+    if (a == b) {
+        return 0;
+    }
+    if (a == NULL) {
+        return -1;
+    }
+    if (b == NULL) {
+        return 1;
+    }
+    return strcasecmp(a, b);
 }

@@ -7,16 +7,19 @@
  * ipc.c: UNIX domain socket IPC (initialization, client handling, protocol).
  *
  */
-#include "all.h"
 
+#include "all.h"
 #include "yajl_utils.h"
 
+#include <ev.h>
+#include <fcntl.h>
+#include <libgen.h>
+#include <locale.h>
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <fcntl.h>
-#include <libgen.h>
-#include <ev.h>
+#include <unistd.h>
+
 #include <yajl/yajl_gen.h>
 #include <yajl/yajl_parse.h>
 
@@ -32,9 +35,124 @@ TAILQ_HEAD(ipc_client_head, ipc_client) all_clients = TAILQ_HEAD_INITIALIZER(all
  */
 static void set_nonblock(int sockfd) {
     int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags & O_NONBLOCK) {
+        return;
+    }
     flags |= O_NONBLOCK;
     if (fcntl(sockfd, F_SETFL, flags) < 0)
         err(-1, "Could not set O_NONBLOCK");
+}
+
+static void ipc_client_timeout(EV_P_ ev_timer *w, int revents);
+static void ipc_socket_writeable_cb(EV_P_ struct ev_io *w, int revents);
+
+static ev_tstamp kill_timeout = 10.0;
+
+void ipc_set_kill_timeout(ev_tstamp new) {
+    kill_timeout = new;
+}
+
+/*
+ * Try to write the contents of the pending buffer to the client's subscription
+ * socket. Will set, reset or clear the timeout and io write callbacks depending
+ * on the result of the write operation.
+ *
+ */
+static void ipc_push_pending(ipc_client *client) {
+    const ssize_t result = writeall_nonblock(client->fd, client->buffer, client->buffer_size);
+    if (result < 0) {
+        return;
+    }
+
+    if ((size_t)result == client->buffer_size) {
+        /* Everything was written successfully: clear the timer and stop the io
+         * callback. */
+        FREE(client->buffer);
+        client->buffer_size = 0;
+        if (client->timeout) {
+            ev_timer_stop(main_loop, client->timeout);
+            FREE(client->timeout);
+        }
+        ev_io_stop(main_loop, client->write_callback);
+        return;
+    }
+
+    /* Otherwise, make sure that the io callback is enabled and create a new
+     * timer if needed. */
+    ev_io_start(main_loop, client->write_callback);
+
+    if (!client->timeout) {
+        struct ev_timer *timeout = scalloc(1, sizeof(struct ev_timer));
+        ev_timer_init(timeout, ipc_client_timeout, kill_timeout, 0.);
+        timeout->data = client;
+        client->timeout = timeout;
+        ev_set_priority(timeout, EV_MINPRI);
+        ev_timer_start(main_loop, client->timeout);
+    } else if (result > 0) {
+        /* Keep the old timeout when nothing is written. Otherwise, we would
+         * keep a dead connection by continuously renewing its timeouts. */
+        ev_timer_stop(main_loop, client->timeout);
+        ev_timer_set(client->timeout, kill_timeout, 0.0);
+        ev_timer_start(main_loop, client->timeout);
+    }
+    if (result == 0) {
+        return;
+    }
+
+    /* Shift the buffer to the left and reduce the allocated space. */
+    client->buffer_size -= (size_t)result;
+    memmove(client->buffer, client->buffer + result, client->buffer_size);
+    client->buffer = srealloc(client->buffer, client->buffer_size);
+}
+
+/*
+ * Given a message and a message type, create the corresponding header, merge it
+ * with the message and append it to the given client's output buffer. Also,
+ * send the message if the client's buffer was empty.
+ *
+ */
+static void ipc_send_client_message(ipc_client *client, size_t size, const uint32_t message_type, const uint8_t *payload) {
+    const i3_ipc_header_t header = {
+        .magic = {'i', '3', '-', 'i', 'p', 'c'},
+        .size = size,
+        .type = message_type};
+    const size_t header_size = sizeof(i3_ipc_header_t);
+    const size_t message_size = header_size + size;
+
+    const bool push_now = (client->buffer_size == 0);
+    client->buffer = srealloc(client->buffer, client->buffer_size + message_size);
+    memcpy(client->buffer + client->buffer_size, ((void *)&header), header_size);
+    memcpy(client->buffer + client->buffer_size + header_size, payload, size);
+    client->buffer_size += message_size;
+
+    if (push_now) {
+        ipc_push_pending(client);
+    }
+}
+
+static void free_ipc_client(ipc_client *client, int exempt_fd) {
+    if (client->fd != exempt_fd) {
+        DLOG("Disconnecting client on fd %d\n", client->fd);
+        close(client->fd);
+    }
+
+    ev_io_stop(main_loop, client->read_callback);
+    FREE(client->read_callback);
+    ev_io_stop(main_loop, client->write_callback);
+    FREE(client->write_callback);
+    if (client->timeout) {
+        ev_timer_stop(main_loop, client->timeout);
+        FREE(client->timeout);
+    }
+
+    free(client->buffer);
+
+    for (int i = 0; i < client->num_events; i++) {
+        free(client->events[i]);
+    }
+    free(client->events);
+    TAILQ_REMOVE(&all_clients, client, clients);
+    free(client);
 }
 
 /*
@@ -44,55 +162,74 @@ static void set_nonblock(int sockfd) {
  */
 void ipc_send_event(const char *event, uint32_t message_type, const char *payload) {
     ipc_client *current;
-    TAILQ_FOREACH(current, &all_clients, clients) {
-        /* see if this client is interested in this event */
-        bool interested = false;
+    TAILQ_FOREACH (current, &all_clients, clients) {
         for (int i = 0; i < current->num_events; i++) {
-            if (strcasecmp(current->events[i], event) != 0)
-                continue;
-            interested = true;
-            break;
+            if (strcasecmp(current->events[i], event) == 0) {
+                ipc_send_client_message(current, strlen(payload), message_type, (uint8_t *)payload);
+                break;
+            }
         }
-        if (!interested)
-            continue;
-
-        ipc_send_message(current->fd, strlen(payload), message_type, (const uint8_t *)payload);
     }
 }
 
 /*
- * Calls shutdown() on each socket and closes it. This function to be called
+ * For shutdown events, we send the reason for the shutdown.
+ */
+static void ipc_send_shutdown_event(shutdown_reason_t reason) {
+    yajl_gen gen = ygenalloc();
+    y(map_open);
+
+    ystr("change");
+
+    if (reason == SHUTDOWN_REASON_RESTART) {
+        ystr("restart");
+    } else if (reason == SHUTDOWN_REASON_EXIT) {
+        ystr("exit");
+    }
+
+    y(map_close);
+
+    const unsigned char *payload;
+    ylength length;
+
+    y(get_buf, &payload, &length);
+    ipc_send_event("shutdown", I3_IPC_EVENT_SHUTDOWN, (const char *)payload);
+
+    y(free);
+}
+
+/*
+ * Calls shutdown() on each socket and closes it. This function is to be called
  * when exiting or restarting only!
  *
+ * exempt_fd is never closed. Set to -1 to close all fds.
+ *
  */
-void ipc_shutdown(void) {
+void ipc_shutdown(shutdown_reason_t reason, int exempt_fd) {
+    ipc_send_shutdown_event(reason);
+
     ipc_client *current;
     while (!TAILQ_EMPTY(&all_clients)) {
         current = TAILQ_FIRST(&all_clients);
-        shutdown(current->fd, SHUT_RDWR);
-        close(current->fd);
-        for (int i = 0; i < current->num_events; i++)
-            free(current->events[i]);
-        free(current->events);
-        TAILQ_REMOVE(&all_clients, current, clients);
-        free(current);
+        if (current->fd != exempt_fd) {
+            shutdown(current->fd, SHUT_RDWR);
+        }
+        free_ipc_client(current, exempt_fd);
     }
 }
 
 /*
- * Executes the command and returns whether it could be successfully parsed
- * or not (at the moment, always returns true).
+ * Executes the given command.
  *
  */
-IPC_HANDLER(command) {
+IPC_HANDLER(run_command) {
     /* To get a properly terminated buffer, we copy
      * message_size bytes out of the buffer */
-    char *command = scalloc(message_size + 1, 1);
-    strncpy(command, (const char *)message, message_size);
-    LOG("IPC: received: *%s*\n", command);
+    char *command = sstrndup((const char *)message, message_size);
+    LOG("IPC: received: *%.4000s*\n", command);
     yajl_gen gen = yajl_gen_alloc(NULL);
 
-    CommandResult *result = parse_command((const char *)command, gen);
+    CommandResult *result = parse_command(command, gen, client);
     free(command);
 
     if (result->needs_tree_render)
@@ -104,8 +241,8 @@ IPC_HANDLER(command) {
     ylength length;
     yajl_gen_get_buf(gen, &reply, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_COMMAND,
-                     (const uint8_t *)reply);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_COMMAND,
+                            (const uint8_t *)reply);
 
     yajl_gen_free(gen);
 }
@@ -239,10 +376,6 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
         case CT_DOCKAREA:
             ystr("dockarea");
             break;
-        default:
-            DLOG("About to dump unknown container type=%d. This is a bug.\n", con->type);
-            assert(false);
-            break;
     }
 
     /* provided for backwards compatibility only. */
@@ -278,17 +411,13 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     ystr("urgent");
     y(bool, con->urgent);
 
-    if (!TAILQ_EMPTY(&(con->marks_head))) {
-        ystr("marks");
-        y(array_open);
-
-        mark_t *mark;
-        TAILQ_FOREACH(mark, &(con->marks_head), marks) {
-            ystr(mark->name);
-        }
-
-        y(array_close);
+    ystr("marks");
+    y(array_open);
+    mark_t *mark;
+    TAILQ_FOREACH (mark, &(con->marks_head), marks) {
+        ystr(mark->name);
     }
+    y(array_close);
 
     ystr("focused");
     y(bool, (con == focused));
@@ -396,6 +525,36 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     else
         y(null);
 
+    ystr("window_type");
+    if (con->window) {
+        if (con->window->window_type == A__NET_WM_WINDOW_TYPE_NORMAL) {
+            ystr("normal");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_DOCK) {
+            ystr("dock");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_DIALOG) {
+            ystr("dialog");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_UTILITY) {
+            ystr("utility");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_TOOLBAR) {
+            ystr("toolbar");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_SPLASH) {
+            ystr("splash");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_MENU) {
+            ystr("menu");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_DROPDOWN_MENU) {
+            ystr("dropdown_menu");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_POPUP_MENU) {
+            ystr("popup_menu");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_TOOLTIP) {
+            ystr("tooltip");
+        } else if (con->window->window_type == A__NET_WM_WINDOW_TYPE_NOTIFICATION) {
+            ystr("notification");
+        } else {
+            ystr("unknown");
+        }
+    } else
+        y(null);
+
     if (con->window && !inplace_restart) {
         /* Window properties are useless to preserve when restarting because
          * they will be queried again anyway. However, for i3-save-tree(1),
@@ -433,7 +592,7 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     y(array_open);
     Con *node;
     if (con->type != CT_DOCKAREA || !inplace_restart) {
-        TAILQ_FOREACH(node, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (node, &(con->nodes_head), nodes) {
             dump_node(gen, node, inplace_restart);
         }
     }
@@ -441,14 +600,14 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
 
     ystr("floating_nodes");
     y(array_open);
-    TAILQ_FOREACH(node, &(con->floating_head), floating_windows) {
+    TAILQ_FOREACH (node, &(con->floating_head), floating_windows) {
         dump_node(gen, node, inplace_restart);
     }
     y(array_close);
 
     ystr("focus");
     y(array_open);
-    TAILQ_FOREACH(node, &(con->focus_head), focused) {
+    TAILQ_FOREACH (node, &(con->focus_head), focused) {
         y(integer, (uintptr_t)node);
     }
     y(array_close);
@@ -478,7 +637,7 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     ystr("swallows");
     y(array_open);
     Match *match;
-    TAILQ_FOREACH(match, &(con->swallow_head), matches) {
+    TAILQ_FOREACH (match, &(con->swallow_head), matches) {
         /* We will generate a new restart_mode match specification after this
          * loop, so skip this one. */
         if (match->restart_mode)
@@ -525,6 +684,11 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
         y(integer, con->depth);
     }
 
+    if (inplace_restart && con->type == CT_ROOT && previous_workspace_name) {
+        ystr("previous_workspace_name");
+        ystr(previous_workspace_name);
+    }
+
     y(map_close);
 }
 
@@ -536,18 +700,29 @@ static void dump_bar_bindings(yajl_gen gen, Barconfig *config) {
     y(array_open);
 
     struct Barbinding *current;
-    TAILQ_FOREACH(current, &(config->bar_bindings), bindings) {
+    TAILQ_FOREACH (current, &(config->bar_bindings), bindings) {
         y(map_open);
 
         ystr("input_code");
         y(integer, current->input_code);
         ystr("command");
         ystr(current->command);
+        ystr("release");
+        y(bool, current->release == B_UPON_KEYRELEASE);
 
         y(map_close);
     }
 
     y(array_close);
+}
+
+static char *canonicalize_output_name(char *name) {
+    /* Do not canonicalize special output names. */
+    if (strcasecmp(name, "primary") == 0) {
+        return name;
+    }
+    Output *output = get_output_by_name(name, false);
+    return output ? output_primary_name(output) : name;
 }
 
 static void dump_bar_config(yajl_gen gen, Barconfig *config) {
@@ -559,8 +734,13 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
     if (config->num_outputs > 0) {
         ystr("outputs");
         y(array_open);
-        for (int c = 0; c < config->num_outputs; c++)
-            ystr(config->outputs[c]);
+        for (int c = 0; c < config->num_outputs; c++) {
+            /* Convert monitor names (RandR ≥ 1.5) or output names
+             * (RandR < 1.5) into monitor names. This way, existing
+             * configs which use output names transparently keep
+             * working. */
+            ystr(canonicalize_output_name(config->outputs[c]));
+        }
         y(array_close);
     }
 
@@ -569,8 +749,8 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
         y(array_open);
 
         struct tray_output_t *tray_output;
-        TAILQ_FOREACH(tray_output, &(config->tray_outputs), tray_outputs) {
-            ystr(tray_output->output);
+        TAILQ_FOREACH (tray_output, &(config->tray_outputs), tray_outputs) {
+            ystr(canonicalize_output_name(tray_output->output));
         }
 
         y(array_close);
@@ -615,32 +795,7 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
     }
 
     ystr("modifier");
-    switch (config->modifier) {
-        case M_NONE:
-            ystr("none");
-            break;
-        case M_CONTROL:
-            ystr("ctrl");
-            break;
-        case M_SHIFT:
-            ystr("shift");
-            break;
-        case M_MOD1:
-            ystr("Mod1");
-            break;
-        case M_MOD2:
-            ystr("Mod2");
-            break;
-        case M_MOD3:
-            ystr("Mod3");
-            break;
-        case M_MOD5:
-            ystr("Mod5");
-            break;
-        default:
-            ystr("Mod4");
-            break;
-    }
+    y(integer, config->modifier);
 
     dump_bar_bindings(gen, config);
 
@@ -661,8 +816,14 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
     ystr("workspace_buttons");
     y(bool, !config->hide_workspace_buttons);
 
+    ystr("workspace_min_width");
+    y(integer, config->workspace_min_width);
+
     ystr("strip_workspace_numbers");
     y(bool, config->strip_workspace_numbers);
+
+    ystr("strip_workspace_name");
+    y(bool, config->strip_workspace_name);
 
     ystr("binding_mode_indicator");
     y(bool, !config->hide_binding_mode_indicator);
@@ -718,7 +879,7 @@ IPC_HANDLER(tree) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_TREE, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_TREE, payload);
     y(free);
 }
 
@@ -734,13 +895,16 @@ IPC_HANDLER(get_workspaces) {
     Con *focused_ws = con_get_workspace(focused);
 
     Con *output;
-    TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
+    TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
         if (con_is_internal(output))
             continue;
         Con *ws;
-        TAILQ_FOREACH(ws, &(output_get_content(output)->nodes_head), nodes) {
+        TAILQ_FOREACH (ws, &(output_get_content(output)->nodes_head), nodes) {
             assert(ws->type == CT_WORKSPACE);
             y(map_open);
+
+            ystr("id");
+            y(integer, (uintptr_t)ws);
 
             ystr("num");
             y(integer, ws->num);
@@ -782,7 +946,7 @@ IPC_HANDLER(get_workspaces) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_WORKSPACES, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_WORKSPACES, payload);
     y(free);
 }
 
@@ -796,11 +960,11 @@ IPC_HANDLER(get_outputs) {
     y(array_open);
 
     Output *output;
-    TAILQ_FOREACH(output, &outputs, outputs) {
+    TAILQ_FOREACH (output, &outputs, outputs) {
         y(map_open);
 
         ystr("name");
-        ystr(output->name);
+        ystr(output_primary_name(output));
 
         ystr("active");
         y(bool, output->active);
@@ -836,7 +1000,7 @@ IPC_HANDLER(get_outputs) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_OUTPUTS, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_OUTPUTS, payload);
     y(free);
 }
 
@@ -850,9 +1014,9 @@ IPC_HANDLER(get_marks) {
     y(array_open);
 
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons) {
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
         mark_t *mark;
-        TAILQ_FOREACH(mark, &(con->marks_head), marks) {
+        TAILQ_FOREACH (mark, &(con->marks_head), marks) {
             ystr(mark->name);
         }
     }
@@ -863,7 +1027,7 @@ IPC_HANDLER(get_marks) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_MARKS, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_MARKS, payload);
     y(free);
 }
 
@@ -896,7 +1060,7 @@ IPC_HANDLER(get_version) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_VERSION, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_VERSION, payload);
     y(free);
 }
 
@@ -912,7 +1076,7 @@ IPC_HANDLER(get_bar_config) {
     if (message_size == 0) {
         y(array_open);
         Barconfig *current;
-        TAILQ_FOREACH(current, &barconfigs, configs) {
+        TAILQ_FOREACH (current, &barconfigs, configs) {
             ystr(current->id);
         }
         y(array_close);
@@ -921,7 +1085,7 @@ IPC_HANDLER(get_bar_config) {
         ylength length;
         y(get_buf, &payload, &length);
 
-        ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_BAR_CONFIG, payload);
+        ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_BAR_CONFIG, payload);
         y(free);
         return;
     }
@@ -932,7 +1096,7 @@ IPC_HANDLER(get_bar_config) {
     sasprintf(&bar_id, "%.*s", message_size, message);
     LOG("IPC: looking for config for bar ID \"%s\"\n", bar_id);
     Barconfig *current, *config = NULL;
-    TAILQ_FOREACH(current, &barconfigs, configs) {
+    TAILQ_FOREACH (current, &barconfigs, configs) {
         if (strcmp(current->id, bar_id) != 0)
             continue;
 
@@ -958,7 +1122,7 @@ IPC_HANDLER(get_bar_config) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_BAR_CONFIG, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_BAR_CONFIG, payload);
     y(free);
 }
 
@@ -971,7 +1135,7 @@ IPC_HANDLER(get_binding_modes) {
 
     y(array_open);
     struct Mode *mode;
-    SLIST_FOREACH(mode, &modes, modes) {
+    SLIST_FOREACH (mode, &modes, modes) {
         ystr(mode->name);
     }
     y(array_close);
@@ -980,7 +1144,7 @@ IPC_HANDLER(get_binding_modes) {
     ylength length;
     y(get_buf, &payload, &length);
 
-    ipc_send_message(fd, length, I3_IPC_REPLY_TYPE_BINDING_MODES, payload);
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_BINDING_MODES, payload);
     y(free);
 }
 
@@ -1003,8 +1167,9 @@ static int add_subscription(void *extra, const unsigned char *s,
     memcpy(client->events[event], s, len);
 
     DLOG("client is now subscribed to:\n");
-    for (int i = 0; i < client->num_events; i++)
+    for (int i = 0; i < client->num_events; i++) {
         DLOG("event %s\n", client->events[i]);
+    }
     DLOG("(done)\n");
 
     return 1;
@@ -1018,21 +1183,6 @@ static int add_subscription(void *extra, const unsigned char *s,
 IPC_HANDLER(subscribe) {
     yajl_handle p;
     yajl_status stat;
-    ipc_client *current, *client = NULL;
-
-    /* Search the ipc_client structure for this connection */
-    TAILQ_FOREACH(current, &all_clients, clients) {
-        if (current->fd != fd)
-            continue;
-
-        client = current;
-        break;
-    }
-
-    if (client == NULL) {
-        ELOG("Could not find ipc_client data structure for fd %d\n", fd);
-        return;
-    }
 
     /* Setup the JSON parser */
     static yajl_callbacks callbacks = {
@@ -1049,19 +1199,165 @@ IPC_HANDLER(subscribe) {
         yajl_free_error(p, err);
 
         const char *reply = "{\"success\":false}";
-        ipc_send_message(fd, strlen(reply), I3_IPC_REPLY_TYPE_SUBSCRIBE, (const uint8_t *)reply);
+        ipc_send_client_message(client, strlen(reply), I3_IPC_REPLY_TYPE_SUBSCRIBE, (const uint8_t *)reply);
         yajl_free(p);
         return;
     }
     yajl_free(p);
     const char *reply = "{\"success\":true}";
-    ipc_send_message(fd, strlen(reply), I3_IPC_REPLY_TYPE_SUBSCRIBE, (const uint8_t *)reply);
+    ipc_send_client_message(client, strlen(reply), I3_IPC_REPLY_TYPE_SUBSCRIBE, (const uint8_t *)reply);
+
+    if (client->first_tick_sent) {
+        return;
+    }
+
+    bool is_tick = false;
+    for (int i = 0; i < client->num_events; i++) {
+        if (strcmp(client->events[i], "tick") == 0) {
+            is_tick = true;
+            break;
+        }
+    }
+    if (!is_tick) {
+        return;
+    }
+
+    client->first_tick_sent = true;
+    const char *payload = "{\"first\":true,\"payload\":\"\"}";
+    ipc_send_client_message(client, strlen(payload), I3_IPC_EVENT_TICK, (const uint8_t *)payload);
+}
+
+/*
+ * Returns the raw last loaded i3 configuration file contents.
+ */
+IPC_HANDLER(get_config) {
+    yajl_gen gen = ygenalloc();
+
+    y(map_open);
+
+    ystr("config");
+    ystr(current_config);
+
+    y(map_close);
+
+    const unsigned char *payload;
+    ylength length;
+    y(get_buf, &payload, &length);
+
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_CONFIG, payload);
+    y(free);
+}
+
+/*
+ * Sends the tick event from the message payload to subscribers. Establishes a
+ * synchronization point in event-related tests.
+ */
+IPC_HANDLER(send_tick) {
+    yajl_gen gen = ygenalloc();
+
+    y(map_open);
+
+    ystr("first");
+    y(bool, false);
+
+    ystr("payload");
+    yajl_gen_string(gen, (unsigned char *)message, message_size);
+
+    y(map_close);
+
+    const unsigned char *payload;
+    ylength length;
+    y(get_buf, &payload, &length);
+
+    ipc_send_event("tick", I3_IPC_EVENT_TICK, (const char *)payload);
+    y(free);
+
+    const char *reply = "{\"success\":true}";
+    ipc_send_client_message(client, strlen(reply), I3_IPC_REPLY_TYPE_TICK, (const uint8_t *)reply);
+    DLOG("Sent tick event\n");
+}
+
+struct sync_state {
+    char *last_key;
+    uint32_t rnd;
+    xcb_window_t window;
+};
+
+static int _sync_json_key(void *extra, const unsigned char *val, size_t len) {
+    struct sync_state *state = extra;
+    FREE(state->last_key);
+    state->last_key = scalloc(len + 1, 1);
+    memcpy(state->last_key, val, len);
+    return 1;
+}
+
+static int _sync_json_int(void *extra, long long val) {
+    struct sync_state *state = extra;
+    if (strcasecmp(state->last_key, "rnd") == 0) {
+        state->rnd = val;
+    } else if (strcasecmp(state->last_key, "window") == 0) {
+        state->window = (xcb_window_t)val;
+    }
+    return 1;
+}
+
+IPC_HANDLER(sync) {
+    yajl_handle p;
+    yajl_status stat;
+
+    /* Setup the JSON parser */
+    static yajl_callbacks callbacks = {
+        .yajl_map_key = _sync_json_key,
+        .yajl_integer = _sync_json_int,
+    };
+
+    struct sync_state state;
+    memset(&state, '\0', sizeof(struct sync_state));
+    p = yalloc(&callbacks, (void *)&state);
+    stat = yajl_parse(p, (const unsigned char *)message, message_size);
+    FREE(state.last_key);
+    if (stat != yajl_status_ok) {
+        unsigned char *err;
+        err = yajl_get_error(p, true, (const unsigned char *)message,
+                             message_size);
+        ELOG("YAJL parse error: %s\n", err);
+        yajl_free_error(p, err);
+
+        const char *reply = "{\"success\":false}";
+        ipc_send_client_message(client, strlen(reply), I3_IPC_REPLY_TYPE_SYNC, (const uint8_t *)reply);
+        yajl_free(p);
+        return;
+    }
+    yajl_free(p);
+
+    DLOG("received IPC sync request (rnd = %d, window = 0x%08x)\n", state.rnd, state.window);
+    sync_respond(state.window, state.rnd);
+    const char *reply = "{\"success\":true}";
+    ipc_send_client_message(client, strlen(reply), I3_IPC_REPLY_TYPE_SYNC, (const uint8_t *)reply);
+}
+
+IPC_HANDLER(get_binding_state) {
+    yajl_gen gen = ygenalloc();
+
+    y(map_open);
+
+    ystr("name");
+    ystr(current_binding_mode);
+
+    y(map_close);
+
+    const unsigned char *payload;
+    ylength length;
+    y(get_buf, &payload, &length);
+
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_GET_BINDING_STATE, payload);
+    y(free);
 }
 
 /* The index of each callback function corresponds to the numeric
  * value of the message type (see include/i3/ipc.h) */
-handler_t handlers[9] = {
-    handle_command,
+handler_t handlers[13] = {
+    handle_run_command,
     handle_get_workspaces,
     handle_subscribe,
     handle_get_outputs,
@@ -1070,6 +1366,10 @@ handler_t handlers[9] = {
     handle_get_bar_config,
     handle_get_version,
     handle_get_binding_modes,
+    handle_get_config,
+    handle_send_tick,
+    handle_sync,
+    handle_get_binding_state,
 };
 
 /*
@@ -1086,6 +1386,8 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
     uint32_t message_type;
     uint32_t message_length;
     uint8_t *message = NULL;
+    ipc_client *client = (ipc_client *)w->data;
+    assert(client->fd == w->fd);
 
     int ret = ipc_recv_message(w->fd, &message_type, &message_length, &message);
     /* EOF or other error */
@@ -1096,31 +1398,10 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
             return;
         }
 
-        /* If not, there was some kind of error. We don’t bother
-         * and close the connection */
-        close(w->fd);
-
-        /* Delete the client from the list of clients */
-        ipc_client *current;
-        TAILQ_FOREACH(current, &all_clients, clients) {
-            if (current->fd != w->fd)
-                continue;
-
-            for (int i = 0; i < current->num_events; i++)
-                free(current->events[i]);
-            free(current->events);
-            /* We can call TAILQ_REMOVE because we break out of the
-             * TAILQ_FOREACH afterwards */
-            TAILQ_REMOVE(&all_clients, current, clients);
-            free(current);
-            break;
-        }
-
-        ev_io_stop(EV_A_ w);
-        free(w);
+        /* If not, there was some kind of error. We don’t bother and close the
+         * connection. Delete the client from the list of clients. */
+        free_ipc_client(client, -1);
         FREE(message);
-
-        DLOG("IPC: client disconnected\n");
         return;
     }
 
@@ -1128,10 +1409,66 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
         DLOG("Unhandled message type: %d\n", message_type);
     else {
         handler_t h = handlers[message_type];
-        h(w->fd, message, 0, message_length, message_type);
+        h(client, message, 0, message_length, message_type);
     }
 
     FREE(message);
+}
+
+static void ipc_client_timeout(EV_P_ ev_timer *w, int revents) {
+    /* No need to be polite and check for writeability, the other callback would
+     * have been called by now. */
+    ipc_client *client = (ipc_client *)w->data;
+
+    char *cmdline = NULL;
+#if defined(__linux__) && defined(SO_PEERCRED)
+    struct ucred peercred;
+    socklen_t so_len = sizeof(peercred);
+    if (getsockopt(client->fd, SOL_SOCKET, SO_PEERCRED, &peercred, &so_len) != 0) {
+        goto end;
+    }
+    char *exepath;
+    sasprintf(&exepath, "/proc/%d/cmdline", peercred.pid);
+
+    int fd = open(exepath, O_RDONLY);
+    free(exepath);
+    if (fd == -1) {
+        goto end;
+    }
+    char buf[512] = {'\0'}; /* cut off cmdline for the error message. */
+    const ssize_t n = read(fd, buf, sizeof(buf));
+    close(fd);
+    if (n < 0) {
+        goto end;
+    }
+    for (char *walk = buf; walk < buf + n - 1; walk++) {
+        if (*walk == '\0') {
+            *walk = ' ';
+        }
+    }
+    cmdline = buf;
+
+    if (cmdline) {
+        ELOG("client %p with pid %d and cmdline '%s' on fd %d timed out, killing\n", client, peercred.pid, cmdline, client->fd);
+    }
+
+end:
+#endif
+    if (!cmdline) {
+        ELOG("client %p on fd %d timed out, killing\n", client, client->fd);
+    }
+
+    free_ipc_client(client, -1);
+}
+
+static void ipc_socket_writeable_cb(EV_P_ ev_io *w, int revents) {
+    DLOG("fd %d writeable\n", w->fd);
+    ipc_client *client = (ipc_client *)w->data;
+
+    /* If this callback is called then there should be a corresponding active
+     * timer. */
+    assert(client->timeout != NULL);
+    ipc_push_pending(client);
 }
 
 /*
@@ -1144,30 +1481,46 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
 void ipc_new_client(EV_P_ struct ev_io *w, int revents) {
     struct sockaddr_un peer;
     socklen_t len = sizeof(struct sockaddr_un);
-    int client;
-    if ((client = accept(w->fd, (struct sockaddr *)&peer, &len)) < 0) {
-        if (errno == EINTR)
-            return;
-        else
+    int fd;
+    if ((fd = accept(w->fd, (struct sockaddr *)&peer, &len)) < 0) {
+        if (errno != EINTR) {
             perror("accept()");
+        }
         return;
     }
 
     /* Close this file descriptor on exec() */
-    (void)fcntl(client, F_SETFD, FD_CLOEXEC);
+    (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
 
-    set_nonblock(client);
+    ipc_new_client_on_fd(EV_A_ fd);
+}
 
-    struct ev_io *package = scalloc(1, sizeof(struct ev_io));
-    ev_io_init(package, ipc_receive_message, client, EV_READ);
-    ev_io_start(EV_A_ package);
+/*
+ * ipc_new_client_on_fd() only sets up the event handler
+ * for activity on the new connection and inserts the file descriptor into
+ * the list of clients.
+ *
+ * This variant is useful for the inherited IPC connection when restarting.
+ *
+ */
+ipc_client *ipc_new_client_on_fd(EV_P_ int fd) {
+    set_nonblock(fd);
 
-    DLOG("IPC: new client connected on fd %d\n", w->fd);
+    ipc_client *client = scalloc(1, sizeof(ipc_client));
+    client->fd = fd;
 
-    ipc_client *new = scalloc(1, sizeof(ipc_client));
-    new->fd = client;
+    client->read_callback = scalloc(1, sizeof(struct ev_io));
+    client->read_callback->data = client;
+    ev_io_init(client->read_callback, ipc_receive_message, fd, EV_READ);
+    ev_io_start(EV_A_ client->read_callback);
 
-    TAILQ_INSERT_TAIL(&all_clients, new, clients);
+    client->write_callback = scalloc(1, sizeof(struct ev_io));
+    client->write_callback->data = client;
+    ev_io_init(client->write_callback, ipc_socket_writeable_cb, fd, EV_WRITE);
+
+    DLOG("IPC: new client connected on fd %d\n", fd);
+    TAILQ_INSERT_TAIL(&all_clients, client, clients);
+    return client;
 }
 
 /*
@@ -1270,7 +1623,7 @@ void ipc_send_workspace_event(const char *change, Con *current, Con *old) {
     y(free);
 }
 
-/**
+/*
  * For the window events we send, along the usual "change" field,
  * also the window container, in "container".
  */
@@ -1300,7 +1653,7 @@ void ipc_send_window_event(const char *property, Con *con) {
     setlocale(LC_NUMERIC, "");
 }
 
-/**
+/*
  * For the barconfig update events, we send the serialized barconfig.
  */
 void ipc_send_barconfig_update_event(Barconfig *barconfig) {
@@ -1347,4 +1700,16 @@ void ipc_send_binding_event(const char *event_type, Binding *bind) {
 
     y(free);
     setlocale(LC_NUMERIC, "");
+}
+
+/*
+ * Sends a restart reply to the IPC client on the specified fd.
+ */
+void ipc_confirm_restart(ipc_client *client) {
+    DLOG("ipc_confirm_restart(fd %d)\n", client->fd);
+    static const char *reply = "[{\"success\":true}]";
+    ipc_send_client_message(
+        client, strlen(reply), I3_IPC_REPLY_TYPE_COMMAND,
+        (const uint8_t *)reply);
+    ipc_push_pending(client);
 }

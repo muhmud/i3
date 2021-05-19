@@ -32,7 +32,7 @@ void scratchpad_move(Con *con) {
     }
     DLOG("should move con %p to __i3_scratch\n", con);
 
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     if (con_get_workspace(con) == __i3_scratch) {
         DLOG("This window is already on __i3_scratch.\n");
         return;
@@ -40,9 +40,7 @@ void scratchpad_move(Con *con) {
 
     /* If the current con is in fullscreen mode, we need to disable that,
      *  as a scratchpad window should never be in fullscreen mode */
-    if (focused && focused->type != CT_WORKSPACE && focused->fullscreen_mode != CF_NONE) {
-        con_toggle_fullscreen(focused, CF_OUTPUT);
-    }
+    con_disable_fullscreen(con);
 
     /* 1: Ensure the window or any parent is floating. From now on, we deal
      * with the CT_FLOATING_CON. We use automatic == false because the user
@@ -84,9 +82,9 @@ void scratchpad_move(Con *con) {
  * can press the same key to quickly look something up).
  *
  */
-void scratchpad_show(Con *con) {
+bool scratchpad_show(Con *con) {
     DLOG("should show scratchpad window %p\n", con);
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     Con *floating;
 
     /* If this was 'scratchpad show' without criteria, we check if the
@@ -97,7 +95,7 @@ void scratchpad_show(Con *con) {
         floating->scratchpad_state != SCRATCHPAD_NONE) {
         DLOG("Focused window is a scratchpad window, hiding it.\n");
         scratchpad_move(focused);
-        return;
+        return true;
     }
 
     /* If the current con or any of its parents are in fullscreen mode, we
@@ -114,17 +112,17 @@ void scratchpad_show(Con *con) {
      * unfocused scratchpad on the current workspace and focus it */
     Con *walk_con;
     Con *focused_ws = con_get_workspace(focused);
-    TAILQ_FOREACH(walk_con, &(focused_ws->floating_head), floating_windows) {
+    TAILQ_FOREACH (walk_con, &(focused_ws->floating_head), floating_windows) {
         if (!con && (floating = con_inside_floating(walk_con)) &&
             floating->scratchpad_state != SCRATCHPAD_NONE &&
             floating != con_inside_floating(focused)) {
             DLOG("Found an unfocused scratchpad window on this workspace\n");
             DLOG("Focusing it: %p\n", walk_con);
             /* use con_descend_tiling_focused to get the last focused
-                 * window inside this scratch container in order to
-                 * keep the focus the same within this container */
-            con_focus(con_descend_tiling_focused(walk_con));
-            return;
+             * window inside this scratch container in order to
+             * keep the focus the same within this container */
+            con_activate(con_descend_tiling_focused(walk_con));
+            return true;
         }
     }
 
@@ -132,7 +130,7 @@ void scratchpad_show(Con *con) {
      * visible scratchpad window on another workspace. In this case we move it
      * to the current workspace. */
     focused_ws = con_get_workspace(focused);
-    TAILQ_FOREACH(walk_con, &all_cons, all_cons) {
+    TAILQ_FOREACH (walk_con, &all_cons, all_cons) {
         Con *walk_ws = con_get_workspace(walk_con);
         if (!con && walk_ws &&
             !con_is_internal(walk_ws) && focused_ws != walk_ws &&
@@ -140,8 +138,9 @@ void scratchpad_show(Con *con) {
             floating->scratchpad_state != SCRATCHPAD_NONE) {
             DLOG("Found a visible scratchpad window on another workspace,\n");
             DLOG("moving it to this workspace: con = %p\n", walk_con);
-            con_move_to_workspace(walk_con, focused_ws, true, false, false);
-            return;
+            con_move_to_workspace(floating, focused_ws, true, false, false);
+            con_activate(con_descend_focused(walk_con));
+            return true;
         }
     }
 
@@ -149,7 +148,7 @@ void scratchpad_show(Con *con) {
      * is actually in the scratchpad */
     if (con && con->parent->scratchpad_state == SCRATCHPAD_NONE) {
         DLOG("Window is not in the scratchpad, doing nothing.\n");
-        return;
+        return false;
     }
 
     /* If this was 'scratchpad show' with criteria, we check if it matches a
@@ -165,7 +164,7 @@ void scratchpad_show(Con *con) {
         if (current == active) {
             DLOG("Window is a scratchpad window, hiding it.\n");
             scratchpad_move(con);
-            return;
+            return true;
         }
     }
 
@@ -178,7 +177,7 @@ void scratchpad_show(Con *con) {
         if (!con) {
             LOG("You don't have any scratchpad windows yet.\n");
             LOG("Use 'move scratchpad' to move a window to the scratchpad.\n");
-            return;
+            return false;
         }
     } else {
         /* We used a criterion, so we need to do what follows (moving,
@@ -195,7 +194,7 @@ void scratchpad_show(Con *con) {
         Con *output = con_get_output(con);
         con->rect.width = output->rect.width * 0.5;
         con->rect.height = output->rect.height * 0.75;
-        floating_check_size(con);
+        floating_check_size(con, false);
         floating_center(con, con_get_workspace(con)->rect);
     }
 
@@ -205,7 +204,9 @@ void scratchpad_show(Con *con) {
         workspace_show(active);
     }
 
-    con_focus(con_descend_focused(con));
+    con_activate(con_descend_focused(con));
+
+    return true;
 }
 
 /*
@@ -244,7 +245,7 @@ static int _lcm(const int m, const int n) {
  *
  */
 void scratchpad_fix_resolution(void) {
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     Con *__i3_output = con_get_output(__i3_scratch);
     DLOG("Current resolution: (%d, %d) %d x %d\n",
          __i3_output->rect.x, __i3_output->rect.y,
@@ -252,7 +253,7 @@ void scratchpad_fix_resolution(void) {
     Con *output;
     int new_width = -1,
         new_height = -1;
-    TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
+    TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
         if (output == __i3_output)
             continue;
         DLOG("output %s's resolution: (%d, %d) %d x %d\n",
@@ -276,14 +277,14 @@ void scratchpad_fix_resolution(void) {
 
     Rect new_rect = __i3_output->rect;
 
-    if (memcmp(&old_rect, &new_rect, sizeof(Rect)) == 0) {
+    if (rect_equals(new_rect, old_rect)) {
         DLOG("Scratchpad size unchanged.\n");
         return;
     }
 
     DLOG("Fixing coordinates of scratchpad windows\n");
     Con *con;
-    TAILQ_FOREACH(con, &(__i3_scratch->floating_head), floating_windows) {
+    TAILQ_FOREACH (con, &(__i3_scratch->floating_head), floating_windows) {
         floating_fix_coordinates(con, &old_rect, &new_rect);
     }
 }

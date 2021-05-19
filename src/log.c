@@ -9,26 +9,23 @@
  */
 #include <config.h>
 
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <unistd.h>
+#include "all.h"
+#include "shmlog.h"
+
+#include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <errno.h>
+#include <sys/time.h>
+#include <unistd.h>
 #if !defined(__OpenBSD__)
 #include <pthread.h>
 #endif
-
-#include "util.h"
-#include "log.h"
-#include "i3.h"
-#include "libi3.h"
-#include "shmlog.h"
 
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
@@ -88,8 +85,13 @@ void init_logging(void) {
             fprintf(stderr, "Could not initialize errorlog\n");
         else {
             errorfile = fopen(errorfilename, "w");
-            if (fcntl(fileno(errorfile), F_SETFD, FD_CLOEXEC)) {
-                fprintf(stderr, "Could not set close-on-exec flag\n");
+            if (!errorfile) {
+                fprintf(stderr, "Could not initialize errorlog on %s: %s\n",
+                        errorfilename, strerror(errno));
+            } else {
+                if (fcntl(fileno(errorfile), F_SETFD, FD_CLOEXEC)) {
+                    fprintf(stderr, "Could not set close-on-exec flag\n");
+                }
             }
         }
     }
@@ -119,9 +121,9 @@ void init_logging(void) {
  */
 void open_logbuffer(void) {
     /* Reserve 1% of the RAM for the logfile, but at max 25 MiB.
-         * For 512 MiB of RAM this will lead to a 5 MiB log buffer.
-         * At the moment (2011-12-10), no testcase leads to an i3 log
-         * of more than ~ 600 KiB. */
+     * For 512 MiB of RAM this will lead to a 5 MiB log buffer.
+     * At the moment (2011-12-10), no testcase leads to an i3 log
+     * of more than ~ 600 KiB. */
     logbuffer_size = min(physical_mem_bytes * 0.01, shmlog_size);
 #if defined(__FreeBSD__)
     sasprintf(&shmlogname, "/tmp/i3-log-%d", getpid());

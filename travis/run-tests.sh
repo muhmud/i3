@@ -26,7 +26,7 @@ fi
 
 # Try running the tests in parallel so that the common case (tests pass) is
 # quick, but fall back to running them in sequence to make debugging easier.
-if ! xvfb-run make check
+if ! ninja test
 then
-	xvfb-run ./testcases/complete-run.pl --parallel=1 || (cat latest/complete-run.log; false)
+	./complete-run.pl --parallel=1 || (cat latest/complete-run.log; false)
 fi

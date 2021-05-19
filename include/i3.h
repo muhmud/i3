@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include <xcb/shape.h>
 #include <xcb/xcb_keysyms.h>
 #include <xcb/xkb.h>
 
@@ -56,7 +57,8 @@ extern xcb_key_symbols_t *keysyms;
 extern char **start_argv;
 extern Display *xlibdpy, *xkbdpy;
 extern int xkb_current_group;
-extern TAILQ_HEAD(bindings_head, Binding) * bindings;
+extern TAILQ_HEAD(bindings_head, Binding) *bindings;
+extern const char *current_binding_mode;
 extern TAILQ_HEAD(autostarts_head, Autostart) autostarts;
 extern TAILQ_HEAD(autostarts_always_head, Autostart) autostarts_always;
 extern TAILQ_HEAD(ws_assignments_head, Workspace_Assignment) ws_assignments;
@@ -70,7 +72,8 @@ extern uint8_t root_depth;
 extern xcb_visualid_t visual_id;
 extern xcb_colormap_t colormap;
 
-extern bool xcursor_supported, xkb_supported;
+extern bool xkb_supported, shape_supported;
 extern xcb_window_t root;
 extern struct ev_loop *main_loop;
 extern bool only_check_config;
+extern bool force_xinerama;

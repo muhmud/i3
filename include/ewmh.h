@@ -12,6 +12,12 @@
 #include <config.h>
 
 /**
+ * Updates all the EWMH desktop properties.
+ *
+ */
+void ewmh_update_desktop_properties(void);
+
+/**
  * Updates _NET_CURRENT_DESKTOP with the current desktop number.
  *
  * EWMH: The index of the current desktop. This is always an integer between 0
@@ -19,24 +25,6 @@
  *
  */
 void ewmh_update_current_desktop(void);
-
-/**
- * Updates _NET_NUMBER_OF_DESKTOPS which we interpret as the number of
- * noninternal workspaces.
- */
-void ewmh_update_number_of_desktops(void);
-
-/**
- * Updates _NET_DESKTOP_NAMES: "The names of all virtual desktops. This is a
- * list of NULL-terminated strings in UTF-8 encoding"
- */
-void ewmh_update_desktop_names(void);
-
-/**
- * Updates _NET_DESKTOP_VIEWPORT, which is an array of pairs of cardinals that
- * define the top left corner of each desktop's viewport.
- */
-void ewmh_update_desktop_viewport(void);
 
 /**
  * Updates _NET_WM_DESKTOP for all windows.
@@ -84,6 +72,12 @@ void ewmh_update_client_list_stacking(xcb_window_t *stack, int num_windows);
 void ewmh_update_sticky(xcb_window_t window, bool sticky);
 
 /**
+ * Set or remove _NEW_WM_STATE_FOCUSED on the window.
+ *
+ */
+void ewmh_update_focused(xcb_window_t window, bool is_focused);
+
+/**
  * Set up the EWMH hints on the root window.
  *
  */
@@ -92,9 +86,9 @@ void ewmh_setup_hints(void);
 /**
  * i3 currently does not support _NET_WORKAREA, because it does not correspond
  * to i3’s concept of workspaces. See also:
- * http://bugs.i3wm.org/539
- * http://bugs.i3wm.org/301
- * http://bugs.i3wm.org/1038
+ * https://bugs.i3wm.org/539
+ * https://bugs.i3wm.org/301
+ * https://bugs.i3wm.org/1038
  *
  * We need to actively delete this property because some display managers (e.g.
  * LightDM) set it.

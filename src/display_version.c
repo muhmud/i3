@@ -10,13 +10,9 @@
  */
 #include "all.h"
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <fcntl.h>
 #include <time.h>
+#include <unistd.h>
 
 static bool human_readable_key, loaded_config_file_name_key;
 static char *human_readable_version, *loaded_config_file_name;
@@ -55,9 +51,12 @@ static yajl_callbacks version_callbacks = {
  *
  */
 void display_running_version(void) {
-    char *socket_path = root_atom_contents("I3_SOCKET_PATH", conn, conn_screen);
-    if (socket_path == NULL)
-        exit(EXIT_SUCCESS);
+    if (getenv("DISPLAY") == NULL) {
+        fprintf(stderr, "\nYour DISPLAY environment variable is not set.\n");
+        fprintf(stderr, "Are you running i3 via SSH or on a virtual console?\n");
+        fprintf(stderr, "Try DISPLAY=:0 i3 --moreversion\n");
+        exit(EXIT_FAILURE);
+    }
 
     char *pid_from_atom = root_atom_contents("I3_PID", conn, conn_screen);
     if (pid_from_atom == NULL) {
@@ -71,18 +70,7 @@ void display_running_version(void) {
     printf("(Getting version from running i3, press ctrl-c to abort…)");
     fflush(stdout);
 
-    /* TODO: refactor this with the code for sending commands */
-    int sockfd = socket(AF_LOCAL, SOCK_STREAM, 0);
-    if (sockfd == -1)
-        err(EXIT_FAILURE, "Could not create socket");
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(struct sockaddr_un));
-    addr.sun_family = AF_LOCAL;
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
-    if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(struct sockaddr_un)) < 0)
-        err(EXIT_FAILURE, "Could not connect to i3");
-
+    int sockfd = ipc_connect(NULL);
     if (ipc_send_message(sockfd, 0, I3_IPC_MESSAGE_TYPE_GET_VERSION,
                          (uint8_t *)"") == -1)
         err(EXIT_FAILURE, "IPC: write()");
@@ -106,7 +94,8 @@ void display_running_version(void) {
     if (state != yajl_status_ok)
         errx(EXIT_FAILURE, "Could not parse my own reply. That's weird. reply is %.*s", (int)reply_length, reply);
 
-    printf("\rRunning i3 version: %s (pid %s)\n", human_readable_version, pid_from_atom);
+    printf("\r\x1b[K");
+    printf("Running i3 version: %s (pid %s)\n", human_readable_version, pid_from_atom);
 
     if (loaded_config_file_name) {
         struct stat sb;
@@ -182,4 +171,6 @@ void display_running_version(void) {
 #endif
 
     yajl_free(handle);
+    free(reply);
+    free(pid_from_atom);
 }

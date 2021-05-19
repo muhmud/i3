@@ -9,12 +9,10 @@
  */
 #include "common.h"
 
-#include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
+#include <string.h>
+
 #include <yajl/yajl_parse.h>
-#include <yajl/yajl_version.h>
 
 /* A datatype to pass through the callbacks to save the state */
 struct workspaces_json_params {
@@ -61,6 +59,12 @@ static int workspaces_boolean_cb(void *params_, int val) {
 static int workspaces_integer_cb(void *params_, long long val) {
     struct workspaces_json_params *params = (struct workspaces_json_params *)params_;
 
+    if (!strcmp(params->cur_key, "id")) {
+        params->workspaces_walk->id = val;
+        FREE(params->cur_key);
+        return 1;
+    }
+
     if (!strcmp(params->cur_key, "num")) {
         params->workspaces_walk->num = (int)val;
         FREE(params->cur_key);
@@ -106,9 +110,9 @@ static int workspaces_string_cb(void *params_, const unsigned char *val, size_t 
         const char *ws_name = (const char *)val;
         params->workspaces_walk->canonical_name = sstrndup(ws_name, len);
 
-        if (config.strip_ws_numbers && params->workspaces_walk->num >= 0) {
-            /* Special case: strip off the workspace number */
-            static char ws_num[10];
+        if ((config.strip_ws_numbers || config.strip_ws_name) && params->workspaces_walk->num >= 0) {
+            /* Special case: strip off the workspace number/name */
+            static char ws_num[32];
 
             snprintf(ws_num, sizeof(ws_num), "%d", params->workspaces_walk->num);
 
@@ -119,11 +123,14 @@ static int workspaces_string_cb(void *params_, const unsigned char *val, size_t 
             if (offset && ws_name[offset] == ':')
                 offset += 1;
 
-            /* Offset may be equal to length, in which case display the number */
-            params->workspaces_walk->name = (offset < len
-                                                 ? i3string_from_markup_with_length(ws_name + offset, len - offset)
-                                                 : i3string_from_markup(ws_num));
-
+            if (config.strip_ws_numbers) {
+                /* Offset may be equal to length, in which case display the number */
+                params->workspaces_walk->name = (offset < len
+                                                     ? i3string_from_markup_with_length(ws_name + offset, len - offset)
+                                                     : i3string_from_markup(ws_num));
+            } else {
+                params->workspaces_walk->name = i3string_from_markup(ws_num);
+            }
         } else {
             /* Default case: just save the name */
             params->workspaces_walk->name = i3string_from_markup_with_length(ws_name, len);
@@ -260,9 +267,9 @@ void free_workspaces(void) {
     }
     i3_ws *ws_walk;
 
-    SLIST_FOREACH(outputs_walk, outputs, slist) {
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
         if (outputs_walk->workspaces != NULL && !TAILQ_EMPTY(outputs_walk->workspaces)) {
-            TAILQ_FOREACH(ws_walk, outputs_walk->workspaces, tailq) {
+            TAILQ_FOREACH (ws_walk, outputs_walk->workspaces, tailq) {
                 I3STRING_FREE(ws_walk->name);
                 FREE(ws_walk->canonical_name);
             }

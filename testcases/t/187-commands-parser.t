@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -86,9 +86,9 @@ is(parser_calls(
    'resize shrink left 25 px or 33 ppt; ' .
    'resize shrink left 25'),
    "cmd_resize(shrink, left, 10, 10)\n" .
-   "cmd_resize(shrink, left, 25, 10)\n" .
+   "cmd_resize(shrink, left, 25, 0)\n" .
    "cmd_resize(shrink, left, 25, 33)\n" .
-   "cmd_resize(shrink, left, 25, 10)",
+   "cmd_resize(shrink, left, 25, 0)",
    'simple resize ok');
 
 is(parser_calls('resize shrink left 25 px or 33 ppt,'),
@@ -169,6 +169,7 @@ is(parser_calls('unknown_literal'),
        rename
        nop
        scratchpad
+       swap
        title_format
        mode
        bar

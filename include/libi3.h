@@ -24,6 +24,16 @@
 
 #define DEFAULT_DIR_MODE (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)
 
+/** Mouse buttons */
+#define XCB_BUTTON_CLICK_LEFT XCB_BUTTON_INDEX_1
+#define XCB_BUTTON_CLICK_MIDDLE XCB_BUTTON_INDEX_2
+#define XCB_BUTTON_CLICK_RIGHT XCB_BUTTON_INDEX_3
+#define XCB_BUTTON_SCROLL_UP XCB_BUTTON_INDEX_4
+#define XCB_BUTTON_SCROLL_DOWN XCB_BUTTON_INDEX_5
+/* xcb doesn't define constants for these. */
+#define XCB_BUTTON_SCROLL_LEFT 6
+#define XCB_BUTTON_SCROLL_RIGHT 7
+
 /**
  * XCB connection and root screen
  *
@@ -91,7 +101,7 @@ void errorlog(char *fmt, ...)
 #if !defined(DLOG)
 void debuglog(char *fmt, ...)
     __attribute__((format(printf, 1, 2)));
-#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, STRIPPED__FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif
 
 /**
@@ -157,11 +167,25 @@ int sasprintf(char **strp, const char *fmt, ...);
 ssize_t writeall(int fd, const void *buf, size_t count);
 
 /**
+ * Like writeall, but instead of retrying upon EAGAIN (returned when a write
+ * would block), the function stops and returns the total number of bytes
+ * written so far.
+ *
+ */
+ssize_t writeall_nonblock(int fd, const void *buf, size_t count);
+
+/**
  * Safe-wrapper around writeall which exits if it returns -1 (meaning that
  * write failed)
  *
  */
 ssize_t swrite(int fd, const void *buf, size_t count);
+
+/**
+ * Like strcasecmp but considers the case where either string is NULL.
+ *
+ */
+int strcasecmp_nullable(const char *a, const char *b);
 
 /**
  * Build an i3String from an UTF-8 encoded string.
@@ -178,11 +202,11 @@ i3String *i3string_from_markup(const char *from_markup);
 
 /**
  * Build an i3String from an UTF-8 encoded string with fixed length.
- * To be used when no proper NUL-terminaison is available.
+ * To be used when no proper NULL-termination is available.
  * Returns the newly-allocated i3String.
  *
  */
-i3String *i3string_from_utf8_with_length(const char *from_utf8, size_t num_bytes);
+i3String *i3string_from_utf8_with_length(const char *from_utf8, ssize_t num_bytes);
 
 /**
  * Build an i3String from an UTF-8 encoded string in Pango markup with fixed
@@ -302,6 +326,11 @@ int ipc_recv_message(int sockfd, uint32_t *message_type,
  */
 void fake_configure_notify(xcb_connection_t *conn, xcb_rectangle_t r, xcb_window_t window, int border_width);
 
+#define HAS_G_UTF8_MAKE_VALID GLIB_CHECK_VERSION(2, 52, 0)
+#if !HAS_G_UTF8_MAKE_VALID
+gchar *g_utf8_make_valid(const gchar *str, gssize len);
+#endif
+
 /**
  * Returns the colorpixel to use for the given hex color (think of HTML). Only
  * works for true-color (vast majority of cases) at the moment, avoiding a
@@ -318,16 +347,14 @@ void fake_configure_notify(xcb_connection_t *conn, xcb_rectangle_t r, xcb_window
  */
 uint32_t get_colorpixel(const char *hex) __attribute__((const));
 
-#if defined(__APPLE__)
-
-/*
+#ifndef HAVE_STRNDUP
+/**
  * Taken from FreeBSD
  * Returns a pointer to a new string which is a duplicate of the
  * string, but only copies at most n characters.
  *
  */
 char *strndup(const char *str, size_t n);
-
 #endif
 
 /**
@@ -449,7 +476,7 @@ xcb_visualtype_t *get_visualtype(xcb_screen_t *screen);
  * release version), based on the git version number.
  *
  */
-bool is_debug_build() __attribute__((const));
+bool is_debug_build(void) __attribute__((const));
 
 /**
  * Returns the name of a temporary file with the specified prefix.
@@ -460,7 +487,7 @@ char *get_process_filename(const char *prefix);
 /**
  * This function returns the absolute path to the executable it is running in.
  *
- * The implementation follows http://stackoverflow.com/a/933996/712014
+ * The implementation follows https://stackoverflow.com/a/933996/712014
  *
  * Returned value must be freed by the caller.
  */
@@ -472,6 +499,12 @@ char *get_exe_path(const char *argv0);
  * guessing the correct value otherwise.
  */
 void init_dpi(void);
+
+/**
+ * This function returns the value of the DPI setting.
+ *
+ */
+long get_dpi_value(void);
 
 /**
  * Convert a logical amount of pixels (e.g. 2 pixels on a “standard” 96 DPI
@@ -490,16 +523,16 @@ int logical_px(const int logical);
 char *resolve_tilde(const char *path);
 
 /**
- * Get the path of the first configuration file found. If override_configpath
- * is specified, that path is returned and saved for further calls. Otherwise,
- * checks the home directory first, then the system directory first, always
- * taking into account the XDG Base Directory Specification ($XDG_CONFIG_HOME,
- * $XDG_CONFIG_DIRS)
+ * Get the path of the first configuration file found. If override_configpath is
+ * specified, that path is returned and saved for further calls. Otherwise,
+ * checks the home directory first, then the system directory, always taking
+ * into account the XDG Base Directory Specification ($XDG_CONFIG_HOME,
+ * $XDG_CONFIG_DIRS).
  *
  */
 char *get_config_path(const char *override_configpath, bool use_system_paths);
 
-#if !defined(__sun)
+#ifndef HAVE_MKDIRP
 /**
  * Emulates mkdir -p (creates any missing folders)
  *
@@ -510,9 +543,9 @@ int mkdirp(const char *path, mode_t mode);
 /** Helper structure for usage in format_placeholders(). */
 typedef struct placeholder_t {
     /* The placeholder to be replaced, e.g., "%title". */
-    char *name;
+    const char *name;
     /* The value this placeholder should be replaced with. */
-    char *value;
+    const char *value;
 } placeholder_t;
 
 /**
@@ -591,17 +624,17 @@ void draw_util_text(i3String *text, surface_t *surface, color_t fg_color, color_
  * surface as well as restoring the cairo state.
  *
  */
-void draw_util_rectangle(xcb_connection_t *conn, surface_t *surface, color_t color, double x, double y, double w, double h);
+void draw_util_rectangle(surface_t *surface, color_t color, double x, double y, double w, double h);
 
 /**
  * Clears a surface with the given color.
  *
  */
-void draw_util_clear_surface(xcb_connection_t *conn, surface_t *surface, color_t color);
+void draw_util_clear_surface(surface_t *surface, color_t color);
 
 /**
  * Copies a surface onto another surface.
  *
  */
-void draw_util_copy_surface(xcb_connection_t *conn, surface_t *src, surface_t *dest, double src_x, double src_y,
+void draw_util_copy_surface(surface_t *src, surface_t *dest, double src_x, double src_y,
                             double dest_x, double dest_y, double width, double height);

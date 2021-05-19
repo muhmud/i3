@@ -10,19 +10,16 @@
  */
 #include "all.h"
 
+#include <ctype.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <libgen.h>
+#include <locale.h>
 #include <sys/wait.h>
-#include <stdarg.h>
+#include <unistd.h>
 #if defined(__OpenBSD__)
 #include <sys/cdefs.h>
 #endif
-#include <fcntl.h>
-#include <pwd.h>
-#include <yajl/yajl_version.h>
-#include <libgen.h>
-#include <ctype.h>
-
-#define SN_API_NOT_YET_FROZEN 1
-#include <libsn/sn-launcher.h>
 
 int min(int a, int b) {
     return (a < b ? a : b);
@@ -53,6 +50,16 @@ Rect rect_sub(Rect a, Rect b) {
                   a.height - b.height};
 }
 
+Rect rect_sanitize_dimensions(Rect rect) {
+    rect.width = (int32_t)rect.width <= 0 ? 1 : rect.width;
+    rect.height = (int32_t)rect.height <= 0 ? 1 : rect.height;
+    return rect;
+}
+
+bool rect_equals(Rect a, Rect b) {
+    return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
 /*
  * Returns true if the name consists of only digits.
  *
@@ -67,18 +74,44 @@ __attribute__((pure)) bool name_is_digits(const char *name) {
 }
 
 /*
+ * Set 'out' to the layout_t value for the given layout. The function
+ * returns true on success or false if the passed string is not a valid
+ * layout name.
+ *
+ */
+bool layout_from_name(const char *layout_str, layout_t *out) {
+    if (strcmp(layout_str, "default") == 0) {
+        *out = L_DEFAULT;
+        return true;
+    } else if (strcasecmp(layout_str, "stacked") == 0 ||
+               strcasecmp(layout_str, "stacking") == 0) {
+        *out = L_STACKED;
+        return true;
+    } else if (strcasecmp(layout_str, "tabbed") == 0) {
+        *out = L_TABBED;
+        return true;
+    } else if (strcasecmp(layout_str, "splitv") == 0) {
+        *out = L_SPLITV;
+        return true;
+    } else if (strcasecmp(layout_str, "splith") == 0) {
+        *out = L_SPLITH;
+        return true;
+    }
+
+    return false;
+}
+
+/*
  * Parses the workspace name as a number. Returns -1 if the workspace should be
  * interpreted as a "named workspace".
  *
  */
-long ws_name_to_number(const char *name) {
+int ws_name_to_number(const char *name) {
     /* positive integers and zero are interpreted as numbers */
     char *endptr = NULL;
-    long parsed_num = strtol(name, &endptr, 10);
-    if (parsed_num == LONG_MIN ||
-        parsed_num == LONG_MAX ||
-        parsed_num < 0 ||
-        endptr == name) {
+    errno = 0;
+    long long parsed_num = strtoll(name, &endptr, 10);
+    if (errno != 0 || parsed_num > INT32_MAX || parsed_num < 0 || endptr == name) {
         parsed_num = -1;
     }
 
@@ -131,7 +164,7 @@ void exec_i3_utility(char *name, char *argv[]) {
     char buffer[BUFSIZ];
     if (readlink("/proc/self/exe", buffer, BUFSIZ) == -1) {
         warn("could not read /proc/self/exe");
-        _exit(1);
+        _exit(EXIT_FAILURE);
     }
     dir = dirname(buffer);
     sasprintf(&migratepath, "%s/%s", dir, name);
@@ -189,7 +222,7 @@ static char **add_argument(char **original, char *opt_char, char *opt_arg, char 
 #define y(x, ...) yajl_gen_##x(gen, ##__VA_ARGS__)
 #define ystr(str) yajl_gen_string(gen, (unsigned char *)str, strlen(str))
 
-char *store_restart_layout(void) {
+static char *store_restart_layout(void) {
     setlocale(LC_NUMERIC, "C");
     yajl_gen gen = yajl_gen_alloc(NULL);
 
@@ -254,12 +287,12 @@ char *store_restart_layout(void) {
 void i3_restart(bool forget_layout) {
     char *restart_filename = forget_layout ? NULL : store_restart_layout();
 
-    kill_nagbar(&config_error_nagbar_pid, true);
-    kill_nagbar(&command_error_nagbar_pid, true);
+    kill_nagbar(config_error_nagbar_pid, true);
+    kill_nagbar(command_error_nagbar_pid, true);
 
     restore_geometry();
 
-    ipc_shutdown();
+    ipc_shutdown(SHUTDOWN_REASON_RESTART, -1);
 
     LOG("restarting \"%s\"...\n", start_argv[0]);
     /* make sure -a is in the argument list or add it */
@@ -279,42 +312,6 @@ void i3_restart(bool forget_layout) {
 
     /* not reached */
 }
-
-#if defined(__OpenBSD__) || defined(__APPLE__)
-
-/*
- * Taken from FreeBSD
- * Find the first occurrence of the byte string s in byte string l.
- *
- */
-void *memmem(const void *l, size_t l_len, const void *s, size_t s_len) {
-    register char *cur, *last;
-    const char *cl = (const char *)l;
-    const char *cs = (const char *)s;
-
-    /* we need something to compare */
-    if (l_len == 0 || s_len == 0)
-        return NULL;
-
-    /* "s" must be smaller or equal to "l" */
-    if (l_len < s_len)
-        return NULL;
-
-    /* special case where s_len == 1 */
-    if (s_len == 1)
-        return memchr(l, (int)*cs, l_len);
-
-    /* the last position where its possible to find "s" in "l" */
-    last = (char *)cl + l_len - s_len;
-
-    for (cur = (char *)cl; cur <= last; cur++)
-        if (cur[0] == cs[0] && memcmp(cur, cs, s_len) == 0)
-            return cur;
-
-    return NULL;
-}
-
-#endif
 
 /*
  * Escapes the given string if a pango font is currently used.
@@ -339,30 +336,19 @@ char *pango_escape_markup(char *input) {
 static void nagbar_exited(EV_P_ ev_child *watcher, int revents) {
     ev_child_stop(EV_A_ watcher);
 
-    if (!WIFEXITED(watcher->rstatus)) {
-        ELOG("ERROR: i3-nagbar did not exit normally.\n");
-        return;
-    }
-
     int exitcode = WEXITSTATUS(watcher->rstatus);
-    DLOG("i3-nagbar process exited with status %d\n", exitcode);
-    if (exitcode == 2) {
-        ELOG("ERROR: i3-nagbar could not be found. Is it correctly installed on your system?\n");
+    if (!WIFEXITED(watcher->rstatus)) {
+        ELOG("i3-nagbar (%d) did not exit normally. This is not an error if the config was reloaded while a nagbar was active.\n", watcher->pid);
+    } else if (exitcode != 0) {
+        ELOG("i3-nagbar (%d) process exited with status %d\n", watcher->pid, exitcode);
+    } else {
+        DLOG("i3-nagbar (%d) process exited with status %d\n", watcher->pid, exitcode);
     }
 
-    *((pid_t *)watcher->data) = -1;
-}
-
-/*
- * Cleanup handler. Will be called when i3 exits. Kills i3-nagbar with signal
- * SIGKILL (9) to make sure there are no left-over i3-nagbar processes.
- *
- */
-static void nagbar_cleanup(EV_P_ ev_cleanup *watcher, int revent) {
-    pid_t *nagbar_pid = (pid_t *)watcher->data;
-    if (*nagbar_pid != -1) {
-        LOG("Sending SIGKILL (%d) to i3-nagbar with PID %d\n", SIGKILL, *nagbar_pid);
-        kill(*nagbar_pid, SIGKILL);
+    pid_t *nagbar_pid = watcher->data;
+    if (*nagbar_pid == watcher->pid) {
+        /* Only reset if the watched nagbar is the active nagbar */
+        *nagbar_pid = -1;
     }
 }
 
@@ -398,27 +384,20 @@ void start_nagbar(pid_t *nagbar_pid, char *argv[]) {
     ev_child_init(child, &nagbar_exited, *nagbar_pid, 0);
     child->data = nagbar_pid;
     ev_child_start(main_loop, child);
-
-    /* install a cleanup watcher (will be called when i3 exits and i3-nagbar is
-     * still running) */
-    ev_cleanup *cleanup = smalloc(sizeof(ev_cleanup));
-    ev_cleanup_init(cleanup, nagbar_cleanup);
-    cleanup->data = nagbar_pid;
-    ev_cleanup_start(main_loop, cleanup);
 }
 
 /*
- * Kills the i3-nagbar process, if *nagbar_pid != -1.
+ * Kills the i3-nagbar process, if nagbar_pid != -1.
  *
  * If wait_for_it is set (restarting i3), this function will waitpid(),
  * otherwise, ev is assumed to handle it (reloading).
  *
  */
-void kill_nagbar(pid_t *nagbar_pid, bool wait_for_it) {
-    if (*nagbar_pid == -1)
+void kill_nagbar(pid_t nagbar_pid, bool wait_for_it) {
+    if (nagbar_pid == -1)
         return;
 
-    if (kill(*nagbar_pid, SIGTERM) == -1)
+    if (kill(nagbar_pid, SIGTERM) == -1)
         warn("kill(configerror_nagbar) failed");
 
     if (!wait_for_it)
@@ -428,5 +407,81 @@ void kill_nagbar(pid_t *nagbar_pid, bool wait_for_it) {
      * exec(), our old pid is no longer watched. So, ev won’t handle SIGCHLD
      * for us and we would end up with a <defunct> process. Therefore we
      * waitpid() here. */
-    waitpid(*nagbar_pid, NULL, 0);
+    waitpid(nagbar_pid, NULL, 0);
+}
+
+/*
+ * Converts a string into a long using strtol().
+ * This is a convenience wrapper checking the parsing result. It returns true
+ * if the number could be parsed.
+ */
+bool parse_long(const char *str, long *out, int base) {
+    char *end = NULL;
+    long result = strtol(str, &end, base);
+    if (result == LONG_MIN || result == LONG_MAX || result < 0 || (end != NULL && *end != '\0')) {
+        *out = result;
+        return false;
+    }
+
+    *out = result;
+    return true;
+}
+
+/*
+ * Slurp reads path in its entirety into buf, returning the length of the file
+ * or -1 if the file could not be read. buf is set to a buffer of appropriate
+ * size, or NULL if -1 is returned.
+ *
+ */
+ssize_t slurp(const char *path, char **buf) {
+    FILE *f;
+    if ((f = fopen(path, "r")) == NULL) {
+        ELOG("Cannot open file \"%s\": %s\n", path, strerror(errno));
+        return -1;
+    }
+    struct stat stbuf;
+    if (fstat(fileno(f), &stbuf) != 0) {
+        ELOG("Cannot fstat() \"%s\": %s\n", path, strerror(errno));
+        fclose(f);
+        return -1;
+    }
+    /* Allocate one extra NUL byte to make the buffer usable with C string
+     * functions. yajl doesn’t need this, but this makes slurp safer. */
+    *buf = scalloc(stbuf.st_size + 1, 1);
+    size_t n = fread(*buf, 1, stbuf.st_size, f);
+    fclose(f);
+    if ((ssize_t)n != stbuf.st_size) {
+        ELOG("File \"%s\" could not be read entirely: got %zd, want %" PRIi64 "\n", path, n, (int64_t)stbuf.st_size);
+        FREE(*buf);
+        return -1;
+    }
+    return (ssize_t)n;
+}
+
+/*
+ * Convert a direction to its corresponding orientation.
+ *
+ */
+orientation_t orientation_from_direction(direction_t direction) {
+    return (direction == D_LEFT || direction == D_RIGHT) ? HORIZ : VERT;
+}
+
+/*
+ * Convert a direction to its corresponding position.
+ *
+ */
+position_t position_from_direction(direction_t direction) {
+    return (direction == D_LEFT || direction == D_UP) ? BEFORE : AFTER;
+}
+
+/*
+ * Convert orientation and position to the corresponding direction.
+ *
+ */
+direction_t direction_from_orientation_position(orientation_t orientation, position_t position) {
+    if (orientation == HORIZ) {
+        return position == BEFORE ? D_LEFT : D_RIGHT;
+    } else {
+        return position == BEFORE ? D_UP : D_DOWN;
+    }
 }

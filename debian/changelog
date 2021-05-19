@@ -1,8 +1,80 @@
-i3-wm (4.12.1-1) unstable; urgency=medium
+i3-wm (4.19-1) unstable; urgency=medium
 
-  * UNRELEASED
+  * New upstream release.
 
- -- Michael Stapelberg <stapelberg@debian.org>  Fri, 01 Apr 2016 16:34:35 +0200
+ -- Michael Stapelberg <stapelberg@debian.org>  Mon, 19 Oct 2020 22:48:30 +0200
+
+i3-wm (4.18.3-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Mon, 19 Oct 2020 22:48:30 +0200
+
+i3-wm (4.18.2-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sun, 26 Jul 2020 10:24:46 +0200
+
+i3-wm (4.18.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Wed, 22 Apr 2020 09:04:42 +0200
+
+i3-wm (4.18-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Mon, 17 Feb 2020 18:25:47 +0100
+
+i3-wm (4.17.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Fri, 30 Aug 2019 23:06:40 +0200
+
+i3-wm (4.17-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sat, 03 Aug 2019 15:14:28 +0200
+
+i3-wm (4.16.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sun, 27 Jan 2019 16:45:11 +0100
+
+i3-wm (4.16-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sun, 04 Nov 2018 14:47:25 +0100
+
+i3-wm (4.15-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sat, 10 Mar 2018 17:27:26 +0100
+
+i3-wm (4.14.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Sun, 24 Sep 2017 19:21:15 +0200
+
+i3-wm (4.14-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Mon, 04 Sep 2017 07:53:16 +0200
+
+i3-wm (4.13-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Michael Stapelberg <stapelberg@debian.org>  Tue, 08 Nov 2016 19:02:16 +0100
 
 i3-wm (4.12-2) unstable; urgency=medium
 
@@ -302,7 +374,7 @@ i3-wm (4.0.2-1) unstable; urgency=low
   * Bugfix: Use correct format string in load_layout (fixes crash in restart)
   * Bugfix: Fix border rendering (border lines were "cutting" through)
   * Bugfix: Raise floating windows immediately when dragging/resizing
-  * Bugfix: Make focus switching work accross outputs again
+  * Bugfix: Make focus switching work across outputs again
   * Bugfix: migration-script: handle resize top/bottom correctly
   * Bugfix: Fix focus issue when moving containers to workspaces
   * Bugfix: Warp cursor when changing outputs again

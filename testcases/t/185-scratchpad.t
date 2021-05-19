@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -429,7 +429,7 @@ does_i3_live;
 ################################################################################
 
 clear_scratchpad;
-my $ws = fresh_workspace;
+$ws = fresh_workspace;
 
 open_window;
 my $scratch = get_focused($ws);
@@ -470,5 +470,109 @@ is(scalar @scratch_nodes, 1, '__i3_scratch contains our window');
 is(scalar @$nodes, 0, 'no window on current ws anymore');
 
 is($scratch_nodes[0]->{scratchpad_state}, 'changed', 'scratchpad_state changed');
+
+################################################################################
+# 15: Verify that 'scratchpad show' returns correct info.
+################################################################################
+
+kill_all_windows;
+
+my $result = cmd 'scratchpad show';
+is($result->[0]->{success}, 0, 'no scratchpad window and call to scratchpad failed');
+
+open_window;
+cmd 'move scratchpad';
+$result = cmd 'scratchpad show';
+is($result->[0]->{success}, 1, 'call to scratchpad succeeded');
+$result = cmd 'scratchpad show';
+is($result->[0]->{success}, 1, 'call to scratchpad succeeded');
+
+kill_all_windows;
+$result = cmd 'scratchpad show';
+is($result->[0]->{success}, 0, 'call to scratchpad failed');
+
+################################################################################
+# 16: Verify that 'scratchpad show' with the criteria returns correct info.
+################################################################################
+
+open_window(name => "scratch-match");
+cmd 'move scratchpad';
+
+$result = cmd '[title="scratch-match"] scratchpad show';
+is($result->[0]->{success}, 1, 'call to scratchpad with the criteria succeeded');
+
+$result = cmd '[title="nomatch"] scratchpad show';
+is($result->[0]->{success}, 0, 'call to scratchpad with non-matching criteria failed');
+
+################################################################################
+# 17: Open a scratchpad window on a workspace, switch to another workspace and
+# call 'scratchpad show' again. Verify that it returns correct info.
+################################################################################
+
+fresh_workspace;
+open_window;
+cmd 'move scratchpad';
+
+fresh_workspace;
+$result = cmd 'scratchpad show';
+is($result->[0]->{success}, 1, 'call to scratchpad in another workspace succeeded');
+
+################################################################################
+# 18: Disabling floating for a scratchpad window should not work.
+################################################################################
+
+kill_all_windows;
+
+$ws = fresh_workspace;
+$window = open_window;
+cmd 'move scratchpad';
+cmd '[id=' . $window->id . '] floating disable';
+
+is(scalar @{get_ws_content($ws)}, 0, 'no window in workspace');
+cmd 'scratchpad show';
+is($x->input_focus, $window->id, 'scratchpad window shown');
+
+################################################################################
+# 19: move position commands do not show scratchpad window
+# See issue #3832
+################################################################################
+
+kill_all_windows;
+
+fresh_workspace;
+$first = open_window;
+$second = open_window;
+
+cmd '[id=' . $first->id . '] move to scratchpad, move position 100 100';
+is ($x->input_focus, $second->id, 'moving scratchpad window does not show it');
+cmd '[id=' . $first->id . '] move position center';
+is ($x->input_focus, $second->id, 'centering scratchpad window does not show it');
+
+###################################################################################
+# Verify that a scratchpad container with child containers that was open in
+# another workspace is moved to the current workspace (with all its children)
+# after a scratchpad show.
+################################################################################
+
+kill_all_windows;
+open_window;
+open_window;
+# This is to dodge the edge case were the whole workspace is moved
+# window-by-window into the scratchpad.
+cmd 'layout tabbed';
+cmd 'focus parent';
+cmd 'move to scratchpad';
+$ws = fresh_workspace;
+cmd 'scratchpad show';
+# Case 1: a parent node in the scratchpad does not lose children
+# Note on the layout: there should be a floating tabbed container, which is
+# represented as follows:
+#    [workspace object] -> [floating_nodes] -> [tabbed node container] -> [the 2 children we expect]
+is(scalar @{get_ws($ws)->{floating_nodes}->[0]->{nodes}->[0]->{nodes}}, 2, 'both windows moved from scratchpad to this workspace');
+
+# Case 2: a parent node in the scratchpad from another workspace does not lose children
+$ws = fresh_workspace;
+cmd 'scratchpad show';
+is(scalar @{get_ws($ws)->{floating_nodes}->[0]->{nodes}->[0]->{nodes}}, 2, 'both windows moved from scratchpad focused on other workspace to this workspace');
 
 done_testing;

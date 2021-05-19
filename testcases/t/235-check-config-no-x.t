@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -53,6 +53,35 @@ like($out, qr/ERROR: *CONFIG: *[Ee]xpected.*tokens/, 'bogus config file');
 $cfg = <<EOT;
 # i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+EOT
+
+($ret, $out) = check_config($cfg);
+is($ret, 0, "exit code == 0");
+is($out, "", 'valid config file');
+
+################################################################################
+# 3: test duplicate keybindings
+################################################################################
+
+$cfg = <<EOT;
+# i3 config file (v4)
+font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+bindsym Shift+a nop 1
+bindsym Shift+a nop 2
+EOT
+
+($ret, $out) = check_config($cfg);
+is($ret, 1, "exit code == 1");
+like($out, qr/ERROR: *Duplicate keybinding in config file/, 'duplicate keybindings');
+
+################################################################################
+# 4: test no duplicate keybindings
+################################################################################
+
+$cfg = <<EOT;
+# i3 config file (v4)
+font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+bindsym Shift+a nop 1
 EOT
 
 ($ret, $out) = check_config($cfg);

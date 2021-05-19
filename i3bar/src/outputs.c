@@ -9,13 +9,12 @@
  */
 #include "common.h"
 
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <errno.h>
-#include <i3/ipc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include <yajl/yajl_parse.h>
-#include <yajl/yajl_version.h>
 
 /* A datatype to pass through the callbacks to save the state */
 struct outputs_json_params {
@@ -173,6 +172,12 @@ static int outputs_start_map_cb(void *params_) {
     return 1;
 }
 
+static void clear_output(i3_output *output) {
+    FREE(output->name);
+    FREE(output->workspaces);
+    FREE(output->trayclients);
+}
+
 /*
  * We hit the end of a map (rect or a new output)
  *
@@ -187,20 +192,20 @@ static int outputs_end_map_cb(void *params_) {
 
     /* See if we actually handle that output */
     if (config.num_outputs > 0) {
+        const bool is_primary = params->outputs_walk->primary;
         bool handle_output = false;
         for (int c = 0; c < config.num_outputs; c++) {
-            if (strcasecmp(params->outputs_walk->name, config.outputs[c]) != 0)
-                continue;
-
-            handle_output = true;
-            break;
+            if ((strcasecmp(params->outputs_walk->name, config.outputs[c]) == 0) ||
+                (strcasecmp(config.outputs[c], "primary") == 0 && is_primary) ||
+                (strcasecmp(config.outputs[c], "nonprimary") == 0 && !is_primary)) {
+                handle_output = true;
+                break;
+            }
         }
         if (!handle_output) {
             DLOG("Ignoring output \"%s\", not configured to handle it.\n",
                  params->outputs_walk->name);
-            FREE(params->outputs_walk->name);
-            FREE(params->outputs_walk->workspaces);
-            FREE(params->outputs_walk->trayclients);
+            clear_output(params->outputs_walk);
             FREE(params->outputs_walk);
             FREE(params->cur_key);
             return 1;
@@ -216,6 +221,9 @@ static int outputs_end_map_cb(void *params_) {
         target->primary = params->outputs_walk->primary;
         target->ws = params->outputs_walk->ws;
         target->rect = params->outputs_walk->rect;
+
+        clear_output(params->outputs_walk);
+        FREE(params->outputs_walk);
     }
     return 1;
 }
@@ -244,6 +252,7 @@ static yajl_callbacks outputs_callbacks = {
     .yajl_end_map = outputs_end_map_cb,
 };
 
+struct outputs_head *outputs;
 /*
  * Initiate the outputs list
  *
@@ -259,7 +268,6 @@ void init_outputs(void) {
  */
 void parse_outputs_json(char *json) {
     struct outputs_json_params params;
-
     params.outputs_walk = NULL;
     params.cur_key = NULL;
     params.json = json;
@@ -286,6 +294,27 @@ void parse_outputs_json(char *json) {
 }
 
 /*
+ * free() all outputs data structures.
+ *
+ */
+void free_outputs(void) {
+    free_workspaces();
+
+    i3_output *outputs_walk;
+    if (outputs == NULL) {
+        return;
+    }
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
+        destroy_window(outputs_walk);
+        if (outputs_walk->trayclients != NULL && !TAILQ_EMPTY(outputs_walk->trayclients)) {
+            FREE_TAILQ(outputs_walk->trayclients, trayclient);
+        }
+        clear_output(outputs_walk);
+    }
+    FREE_SLIST(outputs, i3_output);
+}
+
+/*
  * Returns the output with the given name
  *
  */
@@ -294,7 +323,7 @@ i3_output *get_output_by_name(char *name) {
     if (name == NULL) {
         return NULL;
     }
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (!strcmp(walk->name, name)) {
             break;
         }
@@ -309,7 +338,7 @@ i3_output *get_output_by_name(char *name) {
  */
 bool output_has_focus(i3_output *output) {
     i3_ws *ws_walk;
-    TAILQ_FOREACH(ws_walk, output->workspaces, tailq) {
+    TAILQ_FOREACH (ws_walk, output->workspaces, tailq) {
         if (ws_walk->focused) {
             return true;
         }

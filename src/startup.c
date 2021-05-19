@@ -11,12 +11,12 @@
  *
  */
 #include "all.h"
-
 #include "sd-daemon.h"
 
+#include <paths.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <paths.h>
+#include <unistd.h>
 
 #define SN_API_NOT_YET_FROZEN 1
 #include <libsn/sn-launcher.h>
@@ -36,7 +36,7 @@ static void startup_timeout(EV_P_ ev_timer *w, int revents) {
     DLOG("Timeout for startup sequence %s\n", id);
 
     struct Startup_Sequence *current, *sequence = NULL;
-    TAILQ_FOREACH(current, &startup_sequences, sequences) {
+    TAILQ_FOREACH (current, &startup_sequences, sequences) {
         if (strcmp(current->id, id) != 0)
             continue;
 
@@ -49,6 +49,7 @@ static void startup_timeout(EV_P_ ev_timer *w, int revents) {
 
     if (!sequence) {
         DLOG("Sequence already deleted, nevermind.\n");
+        free(w);
         return;
     }
 
@@ -94,7 +95,7 @@ static int _prune_startup_sequences(void) {
     return active_sequences;
 }
 
-/**
+/*
  * Deletes a startup sequence, ignoring whether its timeout has elapsed.
  * Useful when e.g. a window is moved between workspaces and its children
  * shouldn't spawn on the original workspace.
@@ -117,10 +118,10 @@ void startup_sequence_delete(struct Startup_Sequence *sequence) {
 }
 
 /*
- * Starts the given application by passing it through a shell. We use double fork
- * to avoid zombie processes. As the started application’s parent exits (immediately),
- * the application is reparented to init (process-id 1), which correctly handles
- * childs, so we don’t have to do it :-).
+ * Starts the given application by passing it through a shell. We use double
+ * fork to avoid zombie processes. As the started application’s parent exits
+ * (immediately), the application is reparented to init (process-id 1), which
+ * correctly handles children, so we don’t have to do it :-).
  *
  * The shell used to start applications is the system's bourne shell (i.e.,
  * /bin/sh).
@@ -189,20 +190,18 @@ void start_application(const char *command, bool no_startup_id) {
             /* Setup the environment variable(s) */
             if (!no_startup_id)
                 sn_launcher_context_setup_child_process(context);
+            setenv("I3SOCK", current_socketpath, 1);
 
-            execl(_PATH_BSHELL, _PATH_BSHELL, "-c", command, (void *)NULL);
+            execl(_PATH_BSHELL, _PATH_BSHELL, "-c", command, NULL);
             /* not reached */
         }
-        _exit(0);
+        _exit(EXIT_SUCCESS);
     }
     wait(0);
 
     if (!no_startup_id) {
         /* Change the pointer of the root window to indicate progress */
-        if (xcursor_supported)
-            xcursor_set_root_cursor(XCURSOR_CURSOR_WATCH);
-        else
-            xcb_set_root_cursor(XCURSOR_CURSOR_WATCH);
+        xcursor_set_root_cursor(XCURSOR_CURSOR_WATCH);
     }
 }
 
@@ -218,7 +217,7 @@ void startup_monitor_event(SnMonitorEvent *event, void *userdata) {
     /* Get the corresponding internal startup sequence */
     const char *id = sn_startup_sequence_get_id(snsequence);
     struct Startup_Sequence *current, *sequence = NULL;
-    TAILQ_FOREACH(current, &startup_sequences, sequences) {
+    TAILQ_FOREACH (current, &startup_sequences, sequences) {
         if (strcmp(current->id, id) != 0)
             continue;
 
@@ -244,10 +243,7 @@ void startup_monitor_event(SnMonitorEvent *event, void *userdata) {
             if (_prune_startup_sequences() == 0) {
                 DLOG("No more startup sequences running, changing root window cursor to default pointer.\n");
                 /* Change the pointer of the root window to indicate progress */
-                if (xcursor_supported)
-                    xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
-                else
-                    xcb_set_root_cursor(XCURSOR_CURSOR_POINTER);
+                xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
             }
             break;
         default:
@@ -256,13 +252,13 @@ void startup_monitor_event(SnMonitorEvent *event, void *userdata) {
     }
 }
 
-/**
+/*
  * Renames workspaces that are mentioned in the startup sequences.
  *
  */
 void startup_sequence_rename_workspace(const char *old_name, const char *new_name) {
     struct Startup_Sequence *current;
-    TAILQ_FOREACH(current, &startup_sequences, sequences) {
+    TAILQ_FOREACH (current, &startup_sequences, sequences) {
         if (strcmp(current->workspace, old_name) != 0)
             continue;
         DLOG("Renaming workspace \"%s\" to \"%s\" in startup sequence %s.\n",
@@ -272,7 +268,7 @@ void startup_sequence_rename_workspace(const char *old_name, const char *new_nam
     }
 }
 
-/**
+/*
  * Gets the stored startup sequence for the _NET_STARTUP_ID of a given window.
  *
  */
@@ -318,7 +314,7 @@ struct Startup_Sequence *startup_sequence_get(i3Window *cwindow,
     sasprintf(&startup_id, "%.*s", xcb_get_property_value_length(startup_id_reply),
               (char *)xcb_get_property_value(startup_id_reply));
     struct Startup_Sequence *current, *sequence = NULL;
-    TAILQ_FOREACH(current, &startup_sequences, sequences) {
+    TAILQ_FOREACH (current, &startup_sequences, sequences) {
         if (strcmp(current->id, startup_id) != 0)
             continue;
 
@@ -362,4 +358,23 @@ char *startup_workspace_for_window(i3Window *cwindow, xcb_get_property_reply_t *
     }
 
     return sequence->workspace;
+}
+
+/*
+ * Deletes the startup sequence for a window if it exists.
+ *
+ */
+void startup_sequence_delete_by_window(i3Window *win) {
+    struct Startup_Sequence *sequence;
+    xcb_get_property_cookie_t cookie;
+    xcb_get_property_reply_t *startup_id_reply;
+
+    cookie = xcb_get_property(conn, false, win->id, A__NET_STARTUP_ID,
+                              XCB_GET_PROPERTY_TYPE_ANY, 0, 512);
+    startup_id_reply = xcb_get_property_reply(conn, cookie, NULL);
+
+    sequence = startup_sequence_get(win, startup_id_reply, true);
+    if (sequence != NULL) {
+        startup_sequence_delete(sequence);
+    }
 }

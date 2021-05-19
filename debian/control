@@ -2,8 +2,8 @@ Source: i3-wm
 Section: x11
 Priority: extra
 Maintainer: Michael Stapelberg <stapelberg@debian.org>
-Build-Depends: debhelper (>= 9),
-               dh-autoreconf,
+Build-Depends: debhelper (>= 10),
+               meson,
                libx11-dev,
                libxcb-util0-dev (>= 0.3.8),
                libxcb-keysyms1-dev,
@@ -13,6 +13,7 @@ Build-Depends: debhelper (>= 9),
                libxcb-cursor-dev,
                libxcb-xrm-dev,
                libxcb-xkb-dev,
+               libxcb-shape0-dev,
                libxkbcommon-dev (>= 0.4.0),
                libxkbcommon-x11-dev (>= 0.4.0),
                asciidoc (>= 8.4.4),
@@ -27,7 +28,7 @@ Build-Depends: debhelper (>= 9),
                libpango1.0-dev,
                libpod-simple-perl
 Standards-Version: 3.9.8
-Homepage: http://i3wm.org/
+Homepage: https://i3wm.org/
 
 Package: i3
 Architecture: any
@@ -40,7 +41,7 @@ Description: metapackage (i3 window manager, screen locker, menu, statusbar)
 
 Package: i3-wm
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}, x11-utils
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
 Provides: x-window-manager
 Recommends: xfonts-base, fonts-dejavu-core, libanyevent-i3-perl (>= 0.12), libjson-xs-perl, rxvt-unicode | x-terminal-emulator
 Description: improved dynamic tiling window manager

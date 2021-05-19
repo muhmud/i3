@@ -49,6 +49,12 @@ void x_reinit(Con *con);
  */
 void x_con_kill(Con *con);
 
+/*
+ * Completely reinitializes the container's frame, without destroying the old window.
+ *
+ */
+void x_con_reframe(Con *con);
+
 /**
  * Returns true if the client supports the given protocol atom (like WM_DELETE_WINDOW)
  *
@@ -131,3 +137,8 @@ void x_set_warp_to(Rect *rect);
  *
  */
 void x_mask_event_mask(uint32_t mask);
+
+/**
+ * Enables or disables nonrectangular shape of the container frame.
+ */
+void x_set_shape(Con *con, xcb_shape_sk_t kind, bool enable);

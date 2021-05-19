@@ -87,31 +87,28 @@ void match_copy(Match *dest, Match *src) {
 bool match_matches_window(Match *match, i3Window *window) {
     LOG("Checking window 0x%08x (class %s)\n", window->id, window->class_class);
 
-    if (match->class != NULL) {
-        if (window->class_class == NULL)
-            return false;
-        if (strcmp(match->class->pattern, "__focused__") == 0 &&
-            strcmp(window->class_class, focused->window->class_class) == 0) {
-            LOG("window class matches focused window\n");
-        } else if (regex_matches(match->class, window->class_class)) {
-            LOG("window class matches (%s)\n", window->class_class);
-        } else {
-            return false;
-        }
-    }
+#define GET_FIELD_str(field) (field)
+#define GET_FIELD_i3string(field) (i3string_as_utf8(field))
+#define CHECK_WINDOW_FIELD(match_field, window_field, type)                                       \
+    do {                                                                                          \
+        if (match->match_field != NULL) {                                                         \
+            const char *window_field_str = window->window_field == NULL                           \
+                                               ? ""                                               \
+                                               : GET_FIELD_##type(window->window_field);          \
+            if (strcmp(match->match_field->pattern, "__focused__") == 0 &&                        \
+                focused && focused->window && focused->window->window_field &&                    \
+                strcmp(window_field_str, GET_FIELD_##type(focused->window->window_field)) == 0) { \
+                LOG("window " #match_field " matches focused window\n");                          \
+            } else if (regex_matches(match->match_field, window_field_str)) {                     \
+                LOG("window " #match_field " matches (%s)\n", window_field_str);                  \
+            } else {                                                                              \
+                return false;                                                                     \
+            }                                                                                     \
+        }                                                                                         \
+    } while (0)
 
-    if (match->instance != NULL) {
-        if (window->class_instance == NULL)
-            return false;
-        if (strcmp(match->instance->pattern, "__focused__") == 0 &&
-            strcmp(window->class_instance, focused->window->class_instance) == 0) {
-            LOG("window instance matches focused window\n");
-        } else if (regex_matches(match->instance, window->class_instance)) {
-            LOG("window instance matches (%s)\n", window->class_instance);
-        } else {
-            return false;
-        }
-    }
+    CHECK_WINDOW_FIELD(class, class_class, str);
+    CHECK_WINDOW_FIELD(instance, class_instance, str);
 
     if (match->id != XCB_NONE) {
         if (window->id == match->id) {
@@ -122,33 +119,8 @@ bool match_matches_window(Match *match, i3Window *window) {
         }
     }
 
-    if (match->title != NULL) {
-        if (window->name == NULL)
-            return false;
-
-        const char *title = i3string_as_utf8(window->name);
-        if (strcmp(match->title->pattern, "__focused__") == 0 &&
-            strcmp(title, i3string_as_utf8(focused->window->name)) == 0) {
-            LOG("window title matches focused window\n");
-        } else if (regex_matches(match->title, title)) {
-            LOG("title matches (%s)\n", title);
-        } else {
-            return false;
-        }
-    }
-
-    if (match->window_role != NULL) {
-        if (window->role == NULL)
-            return false;
-        if (strcmp(match->window_role->pattern, "__focused__") == 0 &&
-            strcmp(window->role, focused->window->role) == 0) {
-            LOG("window role matches focused window\n");
-        } else if (regex_matches(match->window_role, window->role)) {
-            LOG("window_role matches (%s)\n", window->role);
-        } else {
-            return false;
-        }
-    }
+    CHECK_WINDOW_FIELD(title, name, i3string);
+    CHECK_WINDOW_FIELD(window_role, role, str);
 
     if (match->window_type != UINT32_MAX) {
         if (window->window_type == match->window_type) {
@@ -165,9 +137,9 @@ bool match_matches_window(Match *match, i3Window *window) {
             return false;
         }
         /* if we find a window that is newer than this one, bail */
-        TAILQ_FOREACH(con, &all_cons, all_cons) {
+        TAILQ_FOREACH (con, &all_cons, all_cons) {
             if ((con->window != NULL) &&
-                _i3_timercmp(con->window->urgent, window->urgent, > )) {
+                _i3_timercmp(con->window->urgent, window->urgent, >)) {
                 return false;
             }
         }
@@ -180,10 +152,10 @@ bool match_matches_window(Match *match, i3Window *window) {
             return false;
         }
         /* if we find a window that is older than this one (and not 0), bail */
-        TAILQ_FOREACH(con, &all_cons, all_cons) {
+        TAILQ_FOREACH (con, &all_cons, all_cons) {
             if ((con->window != NULL) &&
                 (con->window->urgent.tv_sec != 0) &&
-                _i3_timercmp(con->window->urgent, window->urgent, < )) {
+                _i3_timercmp(con->window->urgent, window->urgent, <)) {
                 return false;
             }
         }
@@ -227,7 +199,7 @@ bool match_matches_window(Match *match, i3Window *window) {
 
         bool matched = false;
         mark_t *mark;
-        TAILQ_FOREACH(mark, &(con->marks_head), marks) {
+        TAILQ_FOREACH (mark, &(con->marks_head), marks) {
             if (regex_matches(match->mark, mark->name)) {
                 matched = true;
                 break;
@@ -243,15 +215,43 @@ bool match_matches_window(Match *match, i3Window *window) {
     }
 
     if (match->window_mode != WM_ANY) {
-        if ((con = con_by_window_id(window->id)) == NULL)
+        if ((con = con_by_window_id(window->id)) == NULL) {
             return false;
+        }
 
-        const bool floating = (con_inside_floating(con) != NULL);
-
-        if ((match->window_mode == WM_TILING && floating) ||
-            (match->window_mode == WM_FLOATING && !floating)) {
-            LOG("window_mode does not match\n");
-            return false;
+        switch (match->window_mode) {
+            case WM_TILING_AUTO:
+                if (con->floating != FLOATING_AUTO_OFF) {
+                    return false;
+                }
+                break;
+            case WM_TILING_USER:
+                if (con->floating != FLOATING_USER_OFF) {
+                    return false;
+                }
+                break;
+            case WM_TILING:
+                if (con_inside_floating(con) != NULL) {
+                    return false;
+                }
+                break;
+            case WM_FLOATING_AUTO:
+                if (con->floating != FLOATING_AUTO_ON) {
+                    return false;
+                }
+                break;
+            case WM_FLOATING_USER:
+                if (con->floating != FLOATING_USER_ON) {
+                    return false;
+                }
+                break;
+            case WM_FLOATING:
+                if (con_inside_floating(con) == NULL) {
+                    return false;
+                }
+                break;
+            case WM_ANY:
+                assert(false);
         }
 
         LOG("window_mode matches\n");
@@ -307,12 +307,8 @@ void match_parse_property(Match *match, const char *ctype, const char *cvalue) {
             return;
         }
 
-        char *end;
-        long parsed = strtol(cvalue, &end, 0);
-        if (parsed == LONG_MIN ||
-            parsed == LONG_MAX ||
-            parsed < 0 ||
-            (end && *end != '\0')) {
+        long parsed;
+        if (!parse_long(cvalue, &parsed, 0)) {
             ELOG("Could not parse con id \"%s\"\n", cvalue);
             match->error = sstrdup("invalid con_id");
         } else {
@@ -323,12 +319,8 @@ void match_parse_property(Match *match, const char *ctype, const char *cvalue) {
     }
 
     if (strcmp(ctype, "id") == 0) {
-        char *end;
-        long parsed = strtol(cvalue, &end, 0);
-        if (parsed == LONG_MIN ||
-            parsed == LONG_MAX ||
-            parsed < 0 ||
-            (end && *end != '\0')) {
+        long parsed;
+        if (!parse_long(cvalue, &parsed, 0)) {
             ELOG("Could not parse window id \"%s\"\n", cvalue);
             match->error = sstrdup("invalid id");
         } else {
@@ -403,8 +395,36 @@ void match_parse_property(Match *match, const char *ctype, const char *cvalue) {
         return;
     }
 
+    if (strcmp(ctype, "tiling_from") == 0 &&
+        cvalue != NULL &&
+        strcmp(cvalue, "auto") == 0) {
+        match->window_mode = WM_TILING_AUTO;
+        return;
+    }
+
+    if (strcmp(ctype, "tiling_from") == 0 &&
+        cvalue != NULL &&
+        strcmp(cvalue, "user") == 0) {
+        match->window_mode = WM_TILING_USER;
+        return;
+    }
+
     if (strcmp(ctype, "floating") == 0) {
         match->window_mode = WM_FLOATING;
+        return;
+    }
+
+    if (strcmp(ctype, "floating_from") == 0 &&
+        cvalue != NULL &&
+        strcmp(cvalue, "auto") == 0) {
+        match->window_mode = WM_FLOATING_AUTO;
+        return;
+    }
+
+    if (strcmp(ctype, "floating_from") == 0 &&
+        cvalue != NULL &&
+        strcmp(cvalue, "user") == 0) {
+        match->window_mode = WM_FLOATING_USER;
         return;
     }
 

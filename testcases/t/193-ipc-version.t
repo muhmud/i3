@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -32,6 +32,5 @@ cmp_ok($version->{minor}, '>', 0, 'minor version > 0');
 
 is(int($version->{minor}), $version->{minor}, 'minor version is an integer');
 is(int($version->{patch}), $version->{patch}, 'patch version is an integer');
-like($version->{human_readable}, qr/branch/, 'human readable version contains branch name');
 
 done_testing;

@@ -63,10 +63,10 @@ void cmd_move_con_to_workspace_name(I3_CMD, const char *name, const char *no_aut
 void cmd_move_con_to_workspace_number(I3_CMD, const char *which, const char *no_auto_back_and_forth);
 
 /**
- * Implementation of 'resize set <px> [px] <px> [px]'.
+ * Implementation of 'resize set <width> [px | ppt] <height> [px | ppt]'.
  *
  */
-void cmd_resize_set(I3_CMD, long cwidth, long cheight);
+void cmd_resize_set(I3_CMD, long cwidth, const char *mode_width, long cheight, const char *mode_height);
 
 /**
  * Implementation of 'resize grow|shrink <direction> [<px> px] [or <ppt> ppt]'.
@@ -183,6 +183,12 @@ void cmd_exec(I3_CMD, const char *nosn, const char *command);
 void cmd_focus_direction(I3_CMD, const char *direction);
 
 /**
+ * Implementation of 'focus next|prev sibling'
+ *
+ */
+void cmd_focus_sibling(I3_CMD, const char *direction);
+
+/**
  * Implementation of 'focus tiling|floating|mode_toggle'.
  *
  */
@@ -213,10 +219,10 @@ void cmd_fullscreen(I3_CMD, const char *action, const char *fullscreen_mode);
 void cmd_sticky(I3_CMD, const char *action);
 
 /**
- * Implementation of 'move <direction> [<pixels> [px]]'.
+ * Implementation of 'move <direction> [<amount> [px|ppt]]'.
  *
  */
-void cmd_move_direction(I3_CMD, const char *direction, long move_px);
+void cmd_move_direction(I3_CMD, const char *direction_str, long amount, const char *mode);
 
 /**
  * Implementation of 'layout default|stacked|stacking|tabbed|splitv|splith'.
@@ -261,10 +267,10 @@ void cmd_open(I3_CMD);
 void cmd_focus_output(I3_CMD, const char *name);
 
 /**
- * Implementation of 'move [window|container] [to] [absolute] position <px> [px] <px> [px]
+ * Implementation of 'move [window|container] [to] [absolute] position [<pos_x> [px|ppt] <pos_y> [px|ppt]]
  *
  */
-void cmd_move_window_to_position(I3_CMD, const char *method, long x, long y);
+void cmd_move_window_to_position(I3_CMD, long x, const char *mode_x, long y, const char *mode_y);
 
 /**
  * Implementation of 'move [window|container] [to] [absolute] position center
@@ -291,6 +297,12 @@ void cmd_move_scratchpad(I3_CMD);
 void cmd_scratchpad_show(I3_CMD);
 
 /**
+ * Implementation of 'swap [container] [with] id|con_id|mark <arg>'.
+ *
+ */
+void cmd_swap(I3_CMD, const char *mode, const char *arg);
+
+/**
  * Implementation of 'title_format <format>'
  *
  */
@@ -303,18 +315,24 @@ void cmd_title_format(I3_CMD, const char *format);
 void cmd_rename_workspace(I3_CMD, const char *old_name, const char *new_name);
 
 /**
- * Implementation of 'bar (hidden_state hide|show|toggle)|(mode dock|hide|invisible|toggle) [<bar_id>]'
+ * Implementation of 'bar mode dock|hide|invisible|toggle [<bar_id>]'
  *
  */
-void cmd_bar(I3_CMD, const char *bar_type, const char *bar_value, const char *bar_id);
+void cmd_bar_mode(I3_CMD, const char *bar_mode, const char *bar_id);
 
-/*
+/**
+ * Implementation of 'bar hidden_state hide|show|toggle [<bar_id>]'
+ *
+ */
+void cmd_bar_hidden_state(I3_CMD, const char *bar_hidden_state, const char *bar_id);
+
+/**
  * Implementation of 'shmlog <size>|toggle|on|off'
  *
  */
 void cmd_shmlog(I3_CMD, const char *argument);
 
-/*
+/**
  * Implementation of 'debuglog toggle|on|off'
  *
  */

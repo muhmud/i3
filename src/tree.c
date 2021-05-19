@@ -64,12 +64,19 @@ static Con *_create___i3(void) {
  *
  */
 bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
+    bool result = false;
     char *globbed = resolve_tilde(path);
+    char *buf = NULL;
 
     if (!path_exists(globbed)) {
         LOG("%s does not exist, not restoring tree\n", globbed);
-        free(globbed);
-        return false;
+        goto out;
+    }
+
+    ssize_t len;
+    if ((len = slurp(globbed, &buf)) < 0) {
+        /* slurp already logged an error. */
+        goto out;
     }
 
     /* TODO: refactor the following */
@@ -81,11 +88,14 @@ bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
         geometry->height};
     focused = croot;
 
-    tree_append_json(focused, globbed, NULL);
-    free(globbed);
+    tree_append_json(focused, buf, len, NULL);
 
     DLOG("appended tree, using new root\n");
     croot = TAILQ_FIRST(&(croot->nodes_head));
+    if (!croot) {
+        /* tree_append_json failed. Continuing here would segfault. */
+        goto out;
+    }
     DLOG("new root = %p\n", croot);
     Con *out = TAILQ_FIRST(&(croot->nodes_head));
     DLOG("out = %p\n", out);
@@ -104,8 +114,12 @@ bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
     }
 
     restore_open_placeholder_windows(croot);
+    result = true;
 
-    return true;
+out:
+    free(globbed);
+    free(buf);
+    return result;
 }
 
 /*
@@ -165,16 +179,6 @@ Con *tree_open_con(Con *con, i3Window *window) {
     return new;
 }
 
-static bool _is_con_mapped(Con *con) {
-    Con *child;
-
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes)
-    if (_is_con_mapped(child))
-        return true;
-
-    return con->mapped;
-}
-
 /*
  * Closes the given container including all children.
  * Returns true if the container was killed or false if just WM_DELETE was sent
@@ -183,21 +187,9 @@ static bool _is_con_mapped(Con *con) {
  * The dont_kill_parent flag is specified when the function calls itself
  * recursively while deleting a containers children.
  *
- * The force_set_focus flag is specified in the case of killing a floating
- * window: tree_close_internal() will be invoked for the CT_FLOATINGCON (the parent
- * container) and focus should be set there.
- *
  */
-bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_parent, bool force_set_focus) {
-    bool was_mapped = con->mapped;
+bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_parent) {
     Con *parent = con->parent;
-
-    if (!was_mapped) {
-        /* Even if the container itself is not mapped, its children may be
-         * mapped (for example split containers don't have a mapped window on
-         * their own but usually contain mapped children). */
-        was_mapped = _is_con_mapped(con);
-    }
 
     /* remove the urgency hint of the workspace (if set) */
     if (con->urgent) {
@@ -205,10 +197,6 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
         con_update_parents_urgency(con);
         workspace_update_urgent_flag(con_get_workspace(con));
     }
-
-    /* Get the container which is next focused */
-    Con *next = con_next_focused(con);
-    DLOG("next = %p, focused = %p\n", next, focused);
 
     DLOG("closing %p, kill_window = %d\n", con, kill_window);
     Con *child, *nextchild;
@@ -218,8 +206,9 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     for (child = TAILQ_FIRST(&(con->nodes_head)); child;) {
         nextchild = TAILQ_NEXT(child, nodes);
         DLOG("killing child=%p\n", child);
-        if (!tree_close_internal(child, kill_window, true, false))
+        if (!tree_close_internal(child, kill_window, true)) {
             abort_kill = true;
+        }
         child = nextchild;
     }
 
@@ -240,7 +229,7 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
             xcb_change_window_attributes(conn, con->window->id,
                                          XCB_CW_EVENT_MASK, (uint32_t[]){XCB_NONE});
             xcb_unmap_window(conn, con->window->id);
-            cookie = xcb_reparent_window(conn, con->window->id, root, 0, 0);
+            cookie = xcb_reparent_window(conn, con->window->id, root, con->rect.x, con->rect.y);
 
             /* Ignore X11 errors for the ReparentWindow request.
              * X11 Errors are returned when the window was already destroyed */
@@ -256,8 +245,13 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
              * will be mapped when i3 closes its connection (e.g. when
              * restarting). This is not what we want, since some apps keep
              * unmapped windows around and don’t expect them to suddenly be
-             * mapped. See http://bugs.i3wm.org/1617 */
+             * mapped. See https://bugs.i3wm.org/1617 */
             xcb_change_save_set(conn, XCB_SET_MODE_DELETE, con->window->id);
+
+            /* Stop receiving ShapeNotify events. */
+            if (shape_supported) {
+                xcb_shape_select_input(conn, con->window->id, false);
+            }
 
             /* Ignore X11 errors for the ReparentWindow request.
              * X11 Errors are returned when the window was already destroyed */
@@ -271,17 +265,8 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     Con *ws = con_get_workspace(con);
 
     /* Figure out which container to focus next before detaching 'con'. */
-    if (con_is_floating(con)) {
-        if (con == focused) {
-            DLOG("This is the focused container, i need to find another one to focus. I start looking at ws = %p\n", ws);
-            next = con_next_focused(parent);
-
-            dont_kill_parent = true;
-            DLOG("Alright, focusing %p\n", next);
-        } else {
-            next = NULL;
-        }
-    }
+    Con *next = (con == focused) ? con_next_focused(con) : NULL;
+    DLOG("next = %p, focused = %p\n", next, focused);
 
     /* Detach the container so that it will not be rendered anymore. */
     con_detach(con);
@@ -314,47 +299,17 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     /* kill the X11 part of this container */
     x_con_kill(con);
 
-    if (con_is_floating(con)) {
-        DLOG("Container was floating, killing floating container\n");
-        tree_close_internal(parent, DONT_KILL_WINDOW, false, (con == focused));
-        DLOG("parent container killed\n");
+    if (ws == con) {
+        DLOG("Closing workspace container %s, updating EWMH atoms\n", ws->name);
+        ewmh_update_desktop_properties();
     }
 
-    free(con->name);
-    FREE(con->deco_render_params);
-    TAILQ_REMOVE(&all_cons, con, all_cons);
-    while (!TAILQ_EMPTY(&(con->swallow_head))) {
-        Match *match = TAILQ_FIRST(&(con->swallow_head));
-        TAILQ_REMOVE(&(con->swallow_head), match, matches);
-        match_free(match);
-        free(match);
-    }
-    free(con);
+    con_free(con);
 
-    /* in the case of floating windows, we already focused another container
-     * when closing the parent, so we can exit now. */
-    if (!next) {
-        DLOG("No next container, i will just exit now\n");
-        return true;
-    }
-
-    if (was_mapped || con == focused) {
-        if ((kill_window != DONT_KILL_WINDOW) || !dont_kill_parent || con == focused) {
-            DLOG("focusing %p / %s\n", next, next->name);
-            if (next->type == CT_DOCKAREA) {
-                /* Instead of focusing the dockarea, we need to restore focus to the workspace */
-                con_focus(con_descend_focused(output_get_content(next->parent)));
-            } else {
-                if (!force_set_focus && con != focused)
-                    DLOG("not changing focus, the container was not focused before\n");
-                else
-                    con_focus(next);
-            }
-        } else {
-            DLOG("not focusing because we're not killing anybody\n");
-        }
+    if (next) {
+        con_activate(next);
     } else {
-        DLOG("not focusing, was not mapped\n");
+        DLOG("not changing focus, the container was not focused before\n");
     }
 
     /* check if the parent container is empty now and close it */
@@ -377,7 +332,11 @@ void tree_split(Con *con, orientation_t orientation) {
 
     if (con->type == CT_WORKSPACE) {
         if (con_num_children(con) < 2) {
-            DLOG("Just changing orientation of workspace\n");
+            if (con_num_children(con) == 0) {
+                DLOG("Changing workspace_layout to L_DEFAULT\n");
+                con->workspace_layout = L_DEFAULT;
+            }
+            DLOG("Changing orientation of workspace\n");
             con->layout = (orientation == HORIZ) ? L_SPLITH : L_SPLITV;
             return;
         } else {
@@ -428,7 +387,7 @@ bool level_up(void) {
     /* Skip over floating containers and go directly to the grandparent
      * (which should always be a workspace) */
     if (focused->parent->type == CT_FLOATING_CON) {
-        con_focus(focused->parent->parent);
+        con_activate(focused->parent->parent);
         return true;
     }
 
@@ -439,7 +398,7 @@ bool level_up(void) {
         ELOG("'focus parent': Focus is already on the workspace, cannot go higher than that.\n");
         return false;
     }
-    con_focus(focused->parent);
+    con_activate(focused->parent);
     return true;
 }
 
@@ -464,7 +423,7 @@ bool level_down(void) {
             next = TAILQ_FIRST(&(next->focus_head));
     }
 
-    con_focus(next);
+    con_activate(next);
     return true;
 }
 
@@ -472,13 +431,15 @@ static void mark_unmapped(Con *con) {
     Con *current;
 
     con->mapped = false;
-    TAILQ_FOREACH(current, &(con->nodes_head), nodes)
-    mark_unmapped(current);
+    TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
+        mark_unmapped(current);
+    }
     if (con->type == CT_WORKSPACE) {
         /* We need to call mark_unmapped on floating nodes as well since we can
          * make containers floating. */
-        TAILQ_FOREACH(current, &(con->floating_head), floating_windows)
-        mark_unmapped(current);
+        TAILQ_FOREACH (current, &(con->floating_head), floating_windows) {
+            mark_unmapped(current);
+        }
     }
 }
 
@@ -497,180 +458,181 @@ void tree_render(void) {
     mark_unmapped(croot);
     croot->mapped = true;
 
-    render_con(croot, false);
+    render_con(croot);
 
     x_push_changes(croot);
     DLOG("-- END RENDERING --\n");
 }
 
-/*
- * Recursive function to walk the tree until a con can be found to focus.
- *
- */
-static bool _tree_next(Con *con, char way, orientation_t orientation, bool wrap) {
-    /* When dealing with fullscreen containers, it's necessary to go up to the
-     * workspace level, because 'focus $dir' will start at the con's real
-     * position in the tree, and it may not be possible to get to the edge
-     * normally due to fullscreen focusing restrictions. */
-    if (con->fullscreen_mode == CF_OUTPUT && con->type != CT_WORKSPACE)
-        con = con_get_workspace(con);
-
-    /* Stop recursing at workspaces after attempting to switch to next
-     * workspace if possible. */
-    if (con->type == CT_WORKSPACE) {
-        if (con_get_fullscreen_con(con, CF_GLOBAL)) {
-            DLOG("Cannot change workspace while in global fullscreen mode.\n");
-            return false;
-        }
-        Output *current_output = get_output_containing(con->rect.x, con->rect.y);
-        Output *next_output;
-
-        if (!current_output)
-            return false;
-        DLOG("Current output is %s\n", current_output->name);
-
-        /* Try to find next output */
-        direction_t direction;
-        if (way == 'n' && orientation == HORIZ)
-            direction = D_RIGHT;
-        else if (way == 'p' && orientation == HORIZ)
-            direction = D_LEFT;
-        else if (way == 'n' && orientation == VERT)
-            direction = D_DOWN;
-        else if (way == 'p' && orientation == VERT)
-            direction = D_UP;
-        else
-            return false;
-
-        next_output = get_output_next(direction, current_output, CLOSEST_OUTPUT);
-        if (!next_output)
-            return false;
-        DLOG("Next output is %s\n", next_output->name);
-
-        /* Find visible workspace on next output */
-        Con *workspace = NULL;
-        GREP_FIRST(workspace, output_get_content(next_output->con), workspace_is_visible(child));
-
-        /* Show next workspace and focus appropriate container if possible. */
-        if (!workspace)
-            return false;
-
-        workspace_show(workspace);
-
-        /* If a workspace has an active fullscreen container, one of its
-         * children should always be focused. The above workspace_show()
-         * should be adequate for that, so return. */
-        if (con_get_fullscreen_con(workspace, CF_OUTPUT))
-            return true;
-
-        Con *focus = con_descend_direction(workspace, direction);
-
-        /* special case: if there was no tiling con to focus and the workspace
-         * has a floating con in the focus stack, focus the top of the focus
-         * stack (which may be floating) */
-        if (focus == workspace)
-            focus = con_descend_focused(workspace);
-
-        if (focus) {
-            con_focus(focus);
-            x_set_warp_to(&(focus->rect));
-        }
-        return true;
+static Con *get_tree_next_workspace(Con *con, direction_t direction) {
+    if (con_get_fullscreen_con(con, CF_GLOBAL)) {
+        DLOG("Cannot change workspace while in global fullscreen mode.\n");
+        return NULL;
     }
 
-    Con *parent = con->parent;
+    Output *current_output = get_output_containing(con->rect.x, con->rect.y);
+    if (!current_output) {
+        return NULL;
+    }
+    DLOG("Current output is %s\n", output_primary_name(current_output));
 
-    if (con->type == CT_FLOATING_CON) {
-        if (orientation != HORIZ)
-            return false;
+    Output *next_output = get_output_next(direction, current_output, CLOSEST_OUTPUT);
+    if (!next_output) {
+        return NULL;
+    }
+    DLOG("Next output is %s\n", output_primary_name(next_output));
 
-        /* left/right focuses the previous/next floating container */
-        Con *next;
-        if (way == 'n')
-            next = TAILQ_NEXT(con, floating_windows);
-        else
-            next = TAILQ_PREV(con, floating_head, floating_windows);
+    /* Find visible workspace on next output */
+    Con *workspace = NULL;
+    GREP_FIRST(workspace, output_get_content(next_output->con), workspace_is_visible(child));
+    return workspace;
+}
 
-        /* If there is no next/previous container, wrap */
-        if (!next) {
-            if (way == 'n')
-                next = TAILQ_FIRST(&(parent->floating_head));
-            else
-                next = TAILQ_LAST(&(parent->floating_head), floating_head);
+/*
+ * Returns the next / previous container to focus in the given direction. Does
+ * not modify focus and ensures focus restrictions for fullscreen containers
+ * are respected.
+ *
+ */
+static Con *get_tree_next(Con *con, direction_t direction) {
+    const bool previous = position_from_direction(direction) == BEFORE;
+    const orientation_t orientation = orientation_from_direction(direction);
+
+    Con *first_wrap = NULL;
+
+    if (con->type == CT_WORKSPACE) {
+        /* Special case for FOCUS_WRAPPING_WORKSPACE: allow the focus to leave
+         * the workspace only when a workspace is selected. */
+        goto handle_workspace;
+    }
+
+    while (con->type != CT_WORKSPACE) {
+        if (con->fullscreen_mode == CF_OUTPUT) {
+            /* We've reached a fullscreen container. Directional focus should
+             * now operate on the workspace level. */
+            con = con_get_workspace(con);
+            break;
+        } else if (con->fullscreen_mode == CF_GLOBAL) {
+            /* Focus changes should happen only inside the children of a global
+             * fullscreen container. */
+            return first_wrap;
         }
 
-        /* Still no next/previous container? bail out */
-        if (!next)
-            return false;
+        Con *const parent = con->parent;
+        if (con->type == CT_FLOATING_CON) {
+            if (orientation != HORIZ) {
+                /* up/down does not change floating containers */
+                return NULL;
+            }
 
-        /* Raise the floating window on top of other windows preserving
-         * relative stack order */
+            /* left/right focuses the previous/next floating container */
+            Con *next = previous ? TAILQ_PREV(con, floating_head, floating_windows)
+                                 : TAILQ_NEXT(con, floating_windows);
+            /* If there is no next/previous container, wrap */
+            if (!next) {
+                next = previous ? TAILQ_LAST(&(parent->floating_head), floating_head)
+                                : TAILQ_FIRST(&(parent->floating_head));
+            }
+            /* Our parent does not list us in floating heads? */
+            assert(next);
+
+            return next;
+        }
+
+        if (con_num_children(parent) > 1 && con_orientation(parent) == orientation) {
+            Con *const next = previous ? TAILQ_PREV(con, nodes_head, nodes)
+                                       : TAILQ_NEXT(con, nodes);
+            if (next && con_fullscreen_permits_focusing(next)) {
+                return next;
+            }
+
+            Con *const wrap = previous ? TAILQ_LAST(&(parent->nodes_head), nodes_head)
+                                       : TAILQ_FIRST(&(parent->nodes_head));
+            switch (config.focus_wrapping) {
+                case FOCUS_WRAPPING_OFF:
+                    break;
+                case FOCUS_WRAPPING_WORKSPACE:
+                case FOCUS_WRAPPING_ON:
+                    if (!first_wrap && con_fullscreen_permits_focusing(wrap)) {
+                        first_wrap = wrap;
+                    }
+                    break;
+                case FOCUS_WRAPPING_FORCE:
+                    /* 'force' should always return to ensure focus doesn't
+                     * leave the parent. */
+                    if (next) {
+                        return NULL; /* blocked by fullscreen */
+                    }
+                    return con_fullscreen_permits_focusing(wrap) ? wrap : NULL;
+            }
+        }
+
+        con = parent;
+    }
+
+    assert(con->type == CT_WORKSPACE);
+    if (config.focus_wrapping == FOCUS_WRAPPING_WORKSPACE) {
+        return first_wrap;
+    }
+
+handle_workspace:;
+    Con *workspace = get_tree_next_workspace(con, direction);
+    return workspace ? workspace : first_wrap;
+}
+
+/*
+ * Changes focus in the given direction
+ *
+ */
+void tree_next(Con *con, direction_t direction) {
+    Con *next = get_tree_next(con, direction);
+    if (!next) {
+        return;
+    }
+    if (next->type == CT_WORKSPACE) {
+        /* Show next workspace and focus appropriate container if possible. */
+        /* Use descend_focused first to give higher priority to floating or
+         * tiling fullscreen containers. */
+        Con *focus = con_descend_focused(next);
+        if (focus->fullscreen_mode == CF_NONE) {
+            Con *focus_tiling = con_descend_tiling_focused(next);
+            /* If descend_tiling returned a workspace then focus is either a
+             * floating container or the same workspace. */
+            if (focus_tiling != next) {
+                focus = focus_tiling;
+            }
+        }
+
+        workspace_show(next);
+        con_activate(focus);
+        x_set_warp_to(&(focus->rect));
+        return;
+    } else if (next->type == CT_FLOATING_CON) {
+        /* Raise the floating window on top of other windows preserving relative
+         * stack order */
+        Con *parent = next->parent;
         while (TAILQ_LAST(&(parent->floating_head), floating_head) != next) {
             Con *last = TAILQ_LAST(&(parent->floating_head), floating_head);
             TAILQ_REMOVE(&(parent->floating_head), last, floating_windows);
             TAILQ_INSERT_HEAD(&(parent->floating_head), last, floating_windows);
         }
-
-        con_focus(con_descend_focused(next));
-        return true;
     }
 
-    /* If the orientation does not match or there is no other con to focus, we
-     * need to go higher in the hierarchy */
-    if (con_orientation(parent) != orientation ||
-        con_num_children(parent) == 1)
-        return _tree_next(parent, way, orientation, wrap);
-
-    Con *current = TAILQ_FIRST(&(parent->focus_head));
-    /* TODO: when can the following happen (except for floating windows, which
-     * are handled above)? */
-    if (TAILQ_EMPTY(&(parent->nodes_head))) {
-        DLOG("nothing to focus\n");
-        return false;
-    }
-
-    Con *next;
-    if (way == 'n')
-        next = TAILQ_NEXT(current, nodes);
-    else
-        next = TAILQ_PREV(current, nodes_head, nodes);
-
-    if (!next) {
-        if (!config.force_focus_wrapping) {
-            /* If there is no next/previous container, we check if we can focus one
-             * when going higher (without wrapping, though). If so, we are done, if
-             * not, we wrap */
-            if (_tree_next(parent, way, orientation, false))
-                return true;
-
-            if (!wrap)
-                return false;
-        }
-
-        if (way == 'n')
-            next = TAILQ_FIRST(&(parent->nodes_head));
-        else
-            next = TAILQ_LAST(&(parent->nodes_head), nodes_head);
-    }
-
-    /* Don't violate fullscreen focus restrictions. */
-    if (!con_fullscreen_permits_focusing(next))
-        return false;
-
-    /* 3: focus choice comes in here. at the moment we will go down
-     * until we find a window */
-    /* TODO: check for window, atm we only go down as far as possible */
-    con_focus(con_descend_focused(next));
-    return true;
+    workspace_show(con_get_workspace(next));
+    con_activate(con_descend_focused(next));
 }
 
 /*
- * Changes focus in the given way (next/previous) and given orientation
- * (horizontal/vertical).
+ * Get the previous / next sibling
  *
  */
-void tree_next(char way, orientation_t orientation) {
-    _tree_next(focused, way, orientation, true);
+Con *get_tree_next_sibling(Con *con, position_t direction) {
+    Con *to_focus = (direction == BEFORE ? TAILQ_PREV(con, nodes_head, nodes)
+                                         : TAILQ_NEXT(con, nodes));
+    if (to_focus && con_fullscreen_permits_focusing(to_focus)) {
+        return to_focus;
+    }
+    return NULL;
 }
 
 /*
@@ -747,7 +709,7 @@ void tree_flatten(Con *con) {
 
     /* 4: close the redundant cons */
     DLOG("closing redundant cons\n");
-    tree_close_internal(con, DONT_KILL_WINDOW, true, false);
+    tree_close_internal(con, DONT_KILL_WINDOW, true);
 
     /* Well, we got to abort the recursion here because we destroyed the
      * container. However, if tree_flatten() is called sufficiently often,

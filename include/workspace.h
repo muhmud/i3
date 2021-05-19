@@ -25,15 +25,53 @@
 #define NET_WM_DESKTOP_ALL 0xFFFFFFFF
 
 /**
+ * Stores a copy of the name of the last used workspace for the workspace
+ * back-and-forth switching.
+ *
+ */
+extern char *previous_workspace_name;
+
+/**
+ * Returns the workspace with the given name or NULL if such a workspace does
+ * not exist.
+ *
+ */
+Con *get_existing_workspace_by_name(const char *name);
+
+/**
+ * Returns the workspace with the given number or NULL if such a workspace does
+ * not exist.
+ *
+ */
+Con *get_existing_workspace_by_num(int num);
+
+/**
+ * Returns the first output that is assigned to a workspace specified by the
+ * given name or number. Returns NULL if no such output exists.
+ *
+ * If an assignment matches by number but there is an assignment later that
+ * matches by name, the second one is preferred.
+ * The order of the 'ws_assignments' queue is respected: if multiple
+ * assignments match the criteria, the first one is returned.
+ * 'name' is ignored when NULL, 'parsed_num' is ignored when it is -1.
+ *
+ */
+Con *get_assigned_output(const char *name, long parsed_num);
+
+/**
+ * Returns true if the first output assigned to a workspace with the given
+ * workspace assignment is the same as the given output.
+ *
+ */
+bool output_triggers_assignment(Output *output, struct Workspace_Assignment *assignment);
+
+/**
  * Returns a pointer to the workspace with the given number (starting at 0),
  * creating the workspace if necessary (by allocating the necessary amount of
  * memory and initializing the data structures correctly).
  *
- * If created is not NULL, *created will be set to whether or not the
- * workspace has just been created.
- *
  */
-Con *workspace_get(const char *num, bool *created);
+Con *workspace_get(const char *num);
 
 /**
  * Extracts workspace names from keybindings (e.g. “web” from “bindsym $mod+1
@@ -108,51 +146,6 @@ void workspace_back_and_forth(void);
  */
 Con *workspace_back_and_forth_get(void);
 
-#if 0
-/**
- * Assigns the given workspace to the given screen by correctly updating its
- * state and reconfiguring all the clients on this workspace.
- *
- * This is called when initializing a screen and when re-assigning it to a
- * different screen which just got available (if you configured it to be on
- * screen 1 and you just plugged in screen 1).
- *
- */
-void workspace_assign_to(Workspace *ws, Output *screen, bool hide_it);
-
-/**
- * Initializes the given workspace if it is not already initialized. The given
- * screen is to be understood as a fallback, if the workspace itself either
- * was not assigned to a particular screen or cannot be placed there because
- * the screen is not attached at the moment.
- *
- */
-void workspace_initialize(Workspace *ws, Output *screen, bool recheck);
-
-/**
- * Gets the first unused workspace for the given screen, taking into account
- * the preferred_screen setting of every workspace (workspace assignments).
- *
- */
-Workspace *get_first_workspace_for_output(Output *screen);
-
-/**
- * Unmaps all clients (and stack windows) of the given workspace.
- *
- * This needs to be called separately when temporarily rendering a workspace
- * which is not the active workspace to force reconfiguration of all clients,
- * like in src/xinerama.c when re-assigning a workspace to another screen.
- *
- */
-void workspace_unmap_clients(xcb_connection_t *conn, Workspace *u_ws);
-
-/**
- * Maps all clients (and stack windows) of the given workspace.
- *
- */
-void workspace_map_clients(xcb_connection_t *conn, Workspace *ws);
-#endif
-
 /**
  * Goes through all clients on the given workspace and updates the workspace’s
  * urgent flag accordingly.
@@ -190,7 +183,6 @@ Con *workspace_encapsulate(Con *ws);
 
 /**
  * Move the given workspace to the specified output.
- * This returns true if and only if moving the workspace was successful.
  *
  */
-bool workspace_move_to_output(Con *ws, const char *output);
+void workspace_move_to_output(Con *ws, Output *output);

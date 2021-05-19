@@ -65,7 +65,7 @@ for my $line (@raw_lines) {
 my $current_state;
 
 for my $line (@lines) {
-    if (my ($state) = ($line =~ /^state ([A-Z_]+):$/)) {
+    if (my ($state) = ($line =~ /^state ([A-Z0-9_]+):$/)) {
         #say "got a new state: $state";
         $current_state = $state;
     } else {
@@ -77,7 +77,7 @@ for my $line (@lines) {
             ($line =~ /
                 ^\s*                  # skip leading whitespace
                 ([a-z_]+ \s* = \s*|)  # optional identifier
-                (.*?) -> \s*          # token 
+                (.*?) -> \s*          # token
                 (.*)                  # optional action
              /x);
 
@@ -116,22 +116,23 @@ my @keys = sort { (length($b) <=> length($a)) or ($a cmp $b) } keys %states;
 
 open(my $enumfh, '>', "GENERATED_${prefix}_enums.h");
 
-# XXX: we might want to have a way to do this without a trailing comma, but gcc
-# seems to eat it.
 my %statenum;
+say $enumfh '#pragma once';
 say $enumfh 'typedef enum {';
 my $cnt = 0;
 for my $state (@keys, '__CALL') {
-    say $enumfh "    $state = $cnt,";
+    say $enumfh ',' if $cnt > 0;
+    print $enumfh "    $state = $cnt";
     $statenum{$state} = $cnt;
     $cnt++;
 }
-say $enumfh '} cmdp_state;';
+say $enumfh "\n} cmdp_state;";
 close($enumfh);
 
 # Third step: Generate the call function.
 open(my $callfh, '>', "GENERATED_${prefix}_call.h");
 my $resultname = uc(substr($prefix, 0, 1)) . substr($prefix, 1) . 'ResultIR';
+say $callfh '#pragma once';
 say $callfh "static void GENERATED_call(const int call_identifier, struct $resultname *result) {";
 say $callfh '    switch (call_identifier) {';
 my $call_id = 0;
@@ -155,11 +156,19 @@ for my $state (@keys) {
         # to generate a format string. The format uses %d for <number>s,
         # literal numbers or state IDs and %s for NULL, <string>s and literal
         # strings.
+
+        # remove the function name temporarily, so that the following
+        # replacements only apply to the arguments.
+        my ($funcname) = ($fmt =~ /^(.+)\(/);
+        $fmt =~ s/^$funcname//;
+
         $fmt =~ s/$_/%d/g for @keys;
         $fmt =~ s/\$([a-z_]+)/%s/g;
         $fmt =~ s/\&([a-z_]+)/%ld/g;
         $fmt =~ s/"([a-z0-9_]+)"/%s/g;
         $fmt =~ s/(?:-?|\b)[0-9]+\b/%d/g;
+
+        $fmt = $funcname . $fmt;
 
         say $callfh "         case $call_id:";
         say $callfh "             result->next_state = $next_state;";
@@ -199,6 +208,7 @@ close($callfh);
 # Fourth step: Generate the token datastructures.
 
 open(my $tokfh, '>', "GENERATED_${prefix}_tokens.h");
+say $tokfh '#pragma once';
 
 for my $state (@keys) {
     my $tokens = $states{$state};
@@ -211,13 +221,15 @@ for my $state (@keys) {
             # quote of the literal. We can do strdup(literal + 1); then :).
             $token_name =~ s/'$//;
         }
+        # Escape double quotes:
+        $token_name =~ s,",\\",g;
         my $next_state = $token->{next_state};
         if ($next_state =~ /^call /) {
             ($call_identifier) = ($next_state =~ /^call ([0-9]+)$/);
             $next_state = '__CALL';
         }
         my $identifier = $token->{identifier};
-        say $tokfh qq|    { "$token_name", "$identifier", $next_state, { $call_identifier } }, |;
+        say $tokfh qq|    { "$token_name", "$identifier", $next_state, { $call_identifier } },|;
     }
     say $tokfh '};';
 }

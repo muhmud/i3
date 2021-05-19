@@ -21,9 +21,11 @@ static int num_screens;
  */
 static Output *get_screen_at(unsigned int x, unsigned int y) {
     Output *output;
-    TAILQ_FOREACH(output, &outputs, outputs)
-    if (output->rect.x == x && output->rect.y == y)
-        return output;
+    TAILQ_FOREACH (output, &outputs, outputs) {
+        if (output->rect.x == x && output->rect.y == y) {
+            return output;
+        }
+    }
 
     return NULL;
 }
@@ -55,8 +57,11 @@ static void query_screens(xcb_connection_t *conn) {
             s->rect.height = min(s->rect.height, screen_info[screen].height);
         } else {
             s = scalloc(1, sizeof(Output));
-            sasprintf(&(s->name), "xinerama-%d", num_screens);
-            DLOG("Created new Xinerama screen %s (%p)\n", s->name, s);
+            struct output_name *output_name = scalloc(1, sizeof(struct output_name));
+            sasprintf(&output_name->name, "xinerama-%d", num_screens);
+            SLIST_INIT(&s->names_head);
+            SLIST_INSERT_HEAD(&s->names_head, output_name, names);
+            DLOG("Created new Xinerama screen %s (%p)\n", output_primary_name(s), s);
             s->active = true;
             s->rect.x = screen_info[screen].x_org;
             s->rect.y = screen_info[screen].y_org;
@@ -68,7 +73,7 @@ static void query_screens(xcb_connection_t *conn) {
             else
                 TAILQ_INSERT_TAIL(&outputs, s, outputs);
             output_init_con(s);
-            init_ws_for_output(s, output_get_content(s->con));
+            init_ws_for_output(s);
             num_screens++;
         }
 
@@ -81,7 +86,7 @@ static void query_screens(xcb_connection_t *conn) {
 
     if (num_screens == 0) {
         ELOG("No screens found. Please fix your setup. i3 will exit now.\n");
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 }
 
@@ -95,7 +100,7 @@ static void use_root_output(xcb_connection_t *conn) {
     s->active = true;
     TAILQ_INSERT_TAIL(&outputs, s, outputs);
     output_init_con(s);
-    init_ws_for_output(s, output_get_content(s->con));
+    init_ws_for_output(s);
 }
 
 /*

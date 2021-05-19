@@ -12,15 +12,13 @@
  */
 #pragma once
 
-#include "libi3.h"
-
-#include <stdbool.h>
 #include "queue.h"
 #include "i3.h"
 
 typedef struct Config Config;
 typedef struct Barconfig Barconfig;
 extern char *current_configpath;
+extern char *current_config;
 extern Config config;
 extern SLIST_HEAD(modes_head, Mode) modes;
 extern TAILQ_HEAD(barconfig_head, Barconfig) barconfigs;
@@ -134,15 +132,24 @@ struct Config {
      * comes with i3. Thus, you can turn it off entirely. */
     bool disable_workspace_bar;
 
-    /** Think of the following layout: Horizontal workspace with a tabbed
-     * con on the left of the screen and a terminal on the right of the
-     * screen. You are in the second container in the tabbed container and
-     * focus to the right. By default, i3 will set focus to the terminal on
-     * the right. If you are in the first container in the tabbed container
-     * however, focusing to the left will wrap. This option forces i3 to
-     * always wrap, which will result in you having to use "focus parent"
-     * more often. */
-    bool force_focus_wrapping;
+    /** When focus wrapping is enabled (the default), attempting to
+     * move focus past the edge of the screen (in other words, in a
+     * direction in which there are no more containers to focus) will
+     * cause the focus to wrap to the opposite edge of the current
+     * container. When it is disabled, nothing happens; the current
+     * focus is preserved.
+     *
+     * Additionally, focus wrapping may be forced. Think of the
+     * following layout: Horizontal workspace with a tabbed con on the
+     * left of the screen and a terminal on the right of the
+     * screen. You are in the second container in the tabbed container
+     * and focus to the right. By default, i3 will set focus to the
+     * terminal on the right. If you are in the first container in the
+     * tabbed container however, focusing to the left will
+     * wrap. Setting focus_wrapping to FOCUS_WRAPPING_FORCE forces i3
+     * to always wrap, which will result in you having to use "focus
+     * parent" more often. */
+    focus_wrapping_t focus_wrapping;
 
     /** By default, use the RandR API for multi-monitor setups.
      * Unfortunately, the nVidia binary graphics driver doesn't support
@@ -153,6 +160,9 @@ struct Config {
      * reconfiguration is not possible). On startup, the list of screens
      * is fetched once and never updated. */
     bool force_xinerama;
+
+    /** Don’t use RandR 1.5 for querying outputs. */
+    bool disable_randr15;
 
     /** Overwrites output detection (for testing), see src/fake_outputs.c */
     char *fake_outputs;
@@ -185,6 +195,13 @@ struct Config {
     /** Specifies whether or not marks should be displayed in the window
      * decoration. Marks starting with a "_" will be ignored either way. */
     bool show_marks;
+
+    /** Title alignment options. */
+    enum {
+        ALIGN_LEFT,
+        ALIGN_CENTER,
+        ALIGN_RIGHT
+    } title_align;
 
     /** The default border style for new windows. */
     border_style_t default_border;
@@ -273,16 +290,7 @@ struct Barconfig {
            S_SHOW = 1 } hidden_state;
 
     /** Bar modifier (to show bar when in hide mode). */
-    enum {
-        M_NONE = 0,
-        M_CONTROL = 1,
-        M_SHIFT = 2,
-        M_MOD1 = 3,
-        M_MOD2 = 4,
-        M_MOD3 = 5,
-        M_MOD4 = 6,
-        M_MOD5 = 7
-    } modifier;
+    uint32_t modifier;
 
     TAILQ_HEAD(bar_bindings_head, Barbinding) bar_bindings;
 
@@ -310,9 +318,16 @@ struct Barconfig {
      * zero. */
     bool hide_workspace_buttons;
 
+    /** The minimal width for workspace buttons. */
+    int workspace_min_width;
+
     /** Strip workspace numbers? Configuration option is
      * 'strip_workspace_numbers yes'. */
     bool strip_workspace_numbers;
+
+    /** Strip workspace name? Configuration option is
+     * 'strip_workspace_name yes'. */
+    bool strip_workspace_name;
 
     /** Hide mode button? Configuration option is 'binding_mode_indicator no'
      * but we invert the bool for the same reason as hide_workspace_buttons.*/
@@ -366,6 +381,9 @@ struct Barbinding {
     /** The command which is to be executed for this button. */
     char *command;
 
+    /** If true, the command will be executed after the button is released. */
+    bool release;
+
     TAILQ_ENTRY(Barbinding) bindings;
 };
 
@@ -375,28 +393,24 @@ struct tray_output_t {
     TAILQ_ENTRY(tray_output_t) tray_outputs;
 };
 
-/**
- * Finds the configuration file to use (either the one specified by
- * override_configpath), the user’s one or the system default) and calls
- * parse_file().
- *
- * If you specify override_configpath, only this path is used to look for a
- * configuration file.
- *
- * If use_nagbar is false, don't try to start i3-nagbar but log the errors to
- * stdout/stderr instead.
- *
- */
-bool parse_configuration(const char *override_configpath, bool use_nagbar);
+typedef enum {
+    C_VALIDATE,
+    C_LOAD,
+    C_RELOAD,
+} config_load_t;
 
 /**
- * Reads the configuration from ~/.i3/config or /etc/i3/config if not found.
+ * (Re-)loads the configuration file (sets useful defaults before).
  *
  * If you specify override_configpath, only this path is used to look for a
  * configuration file.
  *
+ * load_type specifies the type of loading: C_VALIDATE is used to only verify
+ * the correctness of the config file (used with the flag -C). C_LOAD will load
+ * the config for normal use and display errors in the nagbar. C_RELOAD will
+ * also clear the previous config.
  */
-void load_configuration(xcb_connection_t *conn, const char *override_configfile, bool reload);
+bool load_configuration(const char *override_configfile, config_load_t load_type);
 
 /**
  * Ungrabs all keys, to be called before re-grabbing the keys because of a
@@ -404,20 +418,3 @@ void load_configuration(xcb_connection_t *conn, const char *override_configfile,
  *
  */
 void ungrab_all_keys(xcb_connection_t *conn);
-
-/**
- * Sends the current bar configuration as an event to all barconfig_update listeners.
- *
- */
-void update_barconfig();
-
-/**
- * Kills the configerror i3-nagbar process, if any.
- *
- * Called when reloading/restarting.
- *
- * If wait_for_it is set (restarting), this function will waitpid(), otherwise,
- * ev is assumed to handle it (reloading).
- *
- */
-void kill_configerror_nagbar(bool wait_for_it);

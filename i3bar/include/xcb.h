@@ -53,14 +53,14 @@ struct xcb_color_strings_t {
 typedef struct xcb_colors_t xcb_colors_t;
 
 /* Cached width of the custom separator if one was set */
-int separator_symbol_width;
+extern int separator_symbol_width;
 
 /*
  * Early initialization of the connection to X11: Everything which does not
  * depend on 'config'.
  *
  */
-char *init_xcb_early();
+char *init_xcb_early(void);
 
 /**
  * Initialization which depends on 'config' being usable. Called after the

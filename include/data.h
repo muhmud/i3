@@ -9,13 +9,10 @@
  */
 #pragma once
 
-#include "libi3.h"
-
 #define SN_API_NOT_YET_FROZEN 1
 #include <libsn/sn-launcher.h>
 
 #include <xcb/randr.h>
-#include <stdbool.h>
 #include <pcre.h>
 #include <sys/time.h>
 
@@ -59,6 +56,8 @@ typedef enum { D_LEFT,
 typedef enum { NO_ORIENTATION = 0,
                HORIZ,
                VERT } orientation_t;
+typedef enum { BEFORE,
+               AFTER } position_t;
 typedef enum { BS_NORMAL = 0,
                BS_NONE = 1,
                BS_PIXEL = 2 } border_style_t;
@@ -134,9 +133,17 @@ typedef enum {
 } warping_t;
 
 /**
+ * Focus wrapping modes.
+ */
+typedef enum {
+    FOCUS_WRAPPING_OFF = 0,
+    FOCUS_WRAPPING_ON = 1,
+    FOCUS_WRAPPING_FORCE = 2,
+    FOCUS_WRAPPING_WORKSPACE = 3
+} focus_wrapping_t;
+
+/**
  * Stores a rectangle, for example the size of a window, the child window etc.
- * It needs to be packed so that the compiler will not add any padding bytes.
- * (it is used in src/ewmh.c for example)
  *
  * Note that x and y can contain signed values in some cases (for example when
  * used for the coordinates of a window, which can be set outside of the
@@ -150,7 +157,7 @@ struct Rect {
     uint32_t y;
     uint32_t width;
     uint32_t height;
-} __attribute__((packed));
+};
 
 /**
  * Stores the reserved pixels on each screen edge read from a
@@ -293,6 +300,10 @@ struct Binding {
      * title bar (default). */
     bool whole_window;
 
+    /** If this is true for a mouse binding, the binding should only be
+     * executed if the button press was not on the titlebar. */
+    bool exclude_titlebar;
+
     /** Keycode to bind */
     uint32_t keycode;
 
@@ -334,6 +345,11 @@ struct Autostart {
     TAILQ_ENTRY(Autostart) autostarts_always;
 };
 
+struct output_name {
+    char *name;
+    SLIST_ENTRY(output_name) names;
+};
+
 /**
  * An Output is a physical output on your graphics driver. Outputs which
  * are currently in use have (output->active == true). Each output has a
@@ -355,8 +371,10 @@ struct xoutput {
     bool to_be_disabled;
     bool primary;
 
-    /** Name of the output */
-    char *name;
+    /** List of names for the output.
+     * An output always has at least one name; the first name is
+     * considered the primary one. */
+    SLIST_HEAD(names_head, output_name) names_head;
 
     /** Pointer to the Con which represents this output */
     Con *con;
@@ -438,8 +456,29 @@ struct Window {
     int width_increment;
     int height_increment;
 
+    /* Minimum size specified for the window. */
+    int min_width;
+    int min_height;
+
+    /* Maximum size specified for the window. */
+    int max_width;
+    int max_height;
+
     /* aspect ratio from WM_NORMAL_HINTS (MPlayer uses this for example) */
-    double aspect_ratio;
+    double min_aspect_ratio;
+    double max_aspect_ratio;
+
+    /** The window has a nonrectangular shape. */
+    bool shaped;
+    /** The window has a nonrectangular input shape. */
+    bool input_shaped;
+
+    /* Time when the window became managed. Used to determine whether a window
+     * should be swallowed after initial management. */
+    time_t managed_since;
+
+    /* The window has been swallowed. */
+    bool swallowed;
 };
 
 /**
@@ -476,7 +515,11 @@ struct Match {
     } dock;
     xcb_window_t id;
     enum { WM_ANY = 0,
+           WM_TILING_AUTO,
+           WM_TILING_USER,
            WM_TILING,
+           WM_FLOATING_AUTO,
+           WM_FLOATING_USER,
            WM_FLOATING } window_mode;
     Con *con_id;
 
@@ -525,16 +568,19 @@ struct Assignment {
         A_ANY = 0,
         A_COMMAND = (1 << 0),
         A_TO_WORKSPACE = (1 << 1),
-        A_NO_FOCUS = (1 << 2)
+        A_NO_FOCUS = (1 << 2),
+        A_TO_WORKSPACE_NUMBER = (1 << 3),
+        A_TO_OUTPUT = (1 << 4)
     } type;
 
     /** the criteria to check if a window matches */
     Match match;
 
-    /** destination workspace/command, depending on the type */
+    /** destination workspace/command/output, depending on the type */
     union {
         char *command;
         char *workspace;
+        char *output;
     } dest;
 
     TAILQ_ENTRY(Assignment) assignments;

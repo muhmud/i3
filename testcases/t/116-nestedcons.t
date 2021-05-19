@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -53,6 +53,7 @@ my $expected = {
     name => 'root',
     orientation => $ignore,
     type => 'root',
+    window_type => undef,
     id => $ignore,
     rect => $ignore,
     deco_rect => $ignore,
@@ -71,6 +72,7 @@ my $expected = {
     'floating_nodes' => $ignore,
     workspace_layout => 'default',
     current_border_width => -1,
+    marks => $ignore,
 };
 
 # a shallow copy is sufficient, since we only ignore values at the root

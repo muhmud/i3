@@ -8,34 +8,43 @@
  *
  */
 #include "all.h"
+#include "shmlog.h"
 
 #include <ev.h>
 #include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#include <getopt.h>
 #include <libgen.h>
-#include "shmlog.h"
+#include <locale.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#ifdef I3_ASAN_ENABLED
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #include "sd-daemon.h"
+
+#include "i3-atoms_NET_SUPPORTED.xmacro.h"
+#include "i3-atoms_rest.xmacro.h"
 
 /* The original value of RLIMIT_CORE when i3 was started. We need to restore
  * this before starting any other process, since we set RLIMIT_CORE to
  * RLIM_INFINITY for i3 debugging versions. */
 struct rlimit original_rlimit_core;
 
-/** The number of file descriptors passed via socket activation. */
+/* The number of file descriptors passed via socket activation. */
 int listen_fds;
 
-/* We keep the xcb_check watcher around to be able to enable and disable it
+/* We keep the xcb_prepare watcher around to be able to enable and disable it
  * temporarily for drag_pointer(). */
-static struct ev_check *xcb_check;
-
-extern Con *focused;
+static struct ev_prepare *xcb_prepare;
 
 char **start_argv;
 
@@ -70,6 +79,7 @@ const int default_shmlog_size = 25 * 1024 * 1024;
 
 /* The list of key bindings */
 struct bindings_head *bindings;
+const char *current_binding_mode = NULL;
 
 /* The list of exec-lines */
 struct autostarts_head autostarts = TAILQ_HEAD_INITIALIZER(autostarts);
@@ -85,32 +95,35 @@ struct assignments_head assignments = TAILQ_HEAD_INITIALIZER(assignments);
 struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignments);
 
 /* We hope that those are supported and set them to true */
-bool xcursor_supported = true;
 bool xkb_supported = true;
+bool shape_supported = true;
+
+bool force_xinerama = false;
+
+/* Define all atoms as global variables */
+#define xmacro(atom) xcb_atom_t A_##atom;
+I3_NET_SUPPORTED_ATOMS_XMACRO
+I3_REST_ATOMS_XMACRO
+#undef xmacro
 
 /*
- * This callback is only a dummy, see xcb_prepare_cb and xcb_check_cb.
+ * This callback is only a dummy, see xcb_prepare_cb.
  * See also man libev(3): "ev_prepare" and "ev_check" - customise your event loop
  *
  */
 static void xcb_got_event(EV_P_ struct ev_io *w, int revents) {
-    /* empty, because xcb_prepare_cb and xcb_check_cb are used */
+    /* empty, because xcb_prepare_cb are used */
 }
 
 /*
- * Flush before blocking (and waiting for new events)
+ * Called just before the event loop sleeps. Ensures xcb’s incoming and outgoing
+ * queues are empty so that any activity will trigger another event loop
+ * iteration, and hence another xcb_prepare_cb invocation.
  *
  */
 static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
-    xcb_flush(conn);
-}
-
-/*
- * Instead of polling the X connection socket we leave this to
- * xcb_poll_for_event() which knows better than we can ever know.
- *
- */
-static void xcb_check_cb(EV_P_ ev_check *w, int revents) {
+    /* Process all queued (and possibly new) events before the event loop
+       sleeps. */
     xcb_generic_event_t *event;
 
     while ((event = xcb_poll_for_event(conn)) != NULL) {
@@ -133,6 +146,9 @@ static void xcb_check_cb(EV_P_ ev_check *w, int revents) {
 
         free(event);
     }
+
+    /* Flush all queued events to X11. */
+    xcb_flush(conn);
 }
 
 /*
@@ -144,12 +160,12 @@ static void xcb_check_cb(EV_P_ ev_check *w, int revents) {
 void main_set_x11_cb(bool enable) {
     DLOG("Setting main X11 callback to enabled=%d\n", enable);
     if (enable) {
-        ev_check_start(main_loop, xcb_check);
+        ev_prepare_start(main_loop, xcb_prepare);
         /* Trigger the watcher explicitly to handle all remaining X11 events.
          * drag_pointer()’s event handler exits in the middle of the loop. */
-        ev_feed_event(main_loop, xcb_check, 0);
+        ev_feed_event(main_loop, xcb_prepare, 0);
     } else {
-        ev_check_stop(main_loop, xcb_check);
+        ev_prepare_stop(main_loop, xcb_prepare);
     }
 }
 
@@ -158,6 +174,19 @@ void main_set_x11_cb(bool enable) {
  *
  */
 static void i3_exit(void) {
+    if (*shmlogname != '\0') {
+        fprintf(stderr, "Closing SHM log \"%s\"\n", shmlogname);
+        fflush(stderr);
+        shm_unlink(shmlogname);
+    }
+    ipc_shutdown(SHUTDOWN_REASON_EXIT, -1);
+    unlink(config.ipc_socket_path);
+    xcb_disconnect(conn);
+
+    /* If a nagbar is active, kill it */
+    kill_nagbar(config_error_nagbar_pid, false);
+    kill_nagbar(command_error_nagbar_pid, false);
+
 /* We need ev >= 4 for the following code. Since it is not *that* important (it
  * only makes sure that there are no i3-nagbar instances left behind) we still
  * support old systems with libev 3. */
@@ -165,24 +194,77 @@ static void i3_exit(void) {
     ev_loop_destroy(main_loop);
 #endif
 
+#ifdef I3_ASAN_ENABLED
+    __lsan_do_leak_check();
+#endif
+}
+
+/*
+ * (One-shot) Handler for all signals with default action "Core", see signal(7)
+ *
+ * Unlinks the SHM log and re-raises the signal.
+ *
+ */
+static void handle_core_signal(int sig, siginfo_t *info, void *data) {
     if (*shmlogname != '\0') {
-        fprintf(stderr, "Closing SHM log \"%s\"\n", shmlogname);
-        fflush(stderr);
         shm_unlink(shmlogname);
     }
+    raise(sig);
 }
 
 /*
  * (One-shot) Handler for all signals with default action "Term", see signal(7)
  *
- * Unlinks the SHM log and re-raises the signal.
+ * Exits the program gracefully.
  *
  */
-static void handle_signal(int sig, siginfo_t *info, void *data) {
-    if (*shmlogname != '\0') {
-        shm_unlink(shmlogname);
+static void handle_term_signal(struct ev_loop *loop, ev_signal *signal, int revents) {
+    /* We exit gracefully here in the sense that cleanup handlers
+     * installed via atexit are invoked. */
+    exit(128 + signal->signum);
+}
+
+/*
+ * Set up handlers for all signals with default action "Term", see signal(7)
+ *
+ */
+static void setup_term_handlers(void) {
+    static struct ev_signal signal_watchers[6];
+    size_t num_watchers = sizeof(signal_watchers) / sizeof(signal_watchers[0]);
+
+    /* We have to rely on libev functionality here and should not use
+     * sigaction handlers because we need to invoke the exit handlers
+     * and cannot do so from an asynchronous signal handling context as
+     * not all code triggered during exit is signal safe (and exiting
+     * the main loop from said handler is not easily possible). libev's
+     * signal handlers does not impose such a constraint on us. */
+    ev_signal_init(&signal_watchers[0], handle_term_signal, SIGHUP);
+    ev_signal_init(&signal_watchers[1], handle_term_signal, SIGINT);
+    ev_signal_init(&signal_watchers[2], handle_term_signal, SIGALRM);
+    ev_signal_init(&signal_watchers[3], handle_term_signal, SIGTERM);
+    ev_signal_init(&signal_watchers[4], handle_term_signal, SIGUSR1);
+    ev_signal_init(&signal_watchers[5], handle_term_signal, SIGUSR1);
+    for (size_t i = 0; i < num_watchers; i++) {
+        ev_signal_start(main_loop, &signal_watchers[i]);
+        /* The signal handlers should not block ev_run from returning
+         * and so none of the signal handlers should hold a reference to
+         * the main loop. */
+        ev_unref(main_loop);
     }
-    raise(sig);
+}
+
+static int parse_restart_fd(void) {
+    const char *restart_fd = getenv("_I3_RESTART_FD");
+    if (restart_fd == NULL) {
+        return -1;
+    }
+
+    long int fd = -1;
+    if (!parse_long(restart_fd, &fd, 10)) {
+        ELOG("Malformed _I3_RESTART_FD \"%s\"\n", restart_fd);
+        return -1;
+    }
+    return fd;
 }
 
 int main(int argc, char *argv[]) {
@@ -193,7 +275,7 @@ int main(int argc, char *argv[]) {
     bool autostart = true;
     char *layout_path = NULL;
     bool delete_layout_path = false;
-    bool force_xinerama = false;
+    bool disable_randr15 = false;
     char *fake_outputs = NULL;
     bool disable_signalhandler = false;
     bool only_check_config = false;
@@ -209,6 +291,8 @@ int main(int argc, char *argv[]) {
         {"restart", required_argument, 0, 0},
         {"force-xinerama", no_argument, 0, 0},
         {"force_xinerama", no_argument, 0, 0},
+        {"disable-randr15", no_argument, 0, 0},
+        {"disable_randr15", no_argument, 0, 0},
         {"disable-signalhandler", no_argument, 0, 0},
         {"shmlog-size", required_argument, 0, 0},
         {"shmlog_size", required_argument, 0, 0},
@@ -289,6 +373,10 @@ int main(int argc, char *argv[]) {
                          "Please check if your driver really does not support RandR "
                          "and disable this option as soon as you can.\n");
                     break;
+                } else if (strcmp(long_options[option_index].name, "disable-randr15") == 0 ||
+                           strcmp(long_options[option_index].name, "disable_randr15") == 0) {
+                    disable_randr15 = true;
+                    break;
                 } else if (strcmp(long_options[option_index].name, "disable-signalhandler") == 0) {
                     disable_signalhandler = true;
                     break;
@@ -297,6 +385,11 @@ int main(int argc, char *argv[]) {
                     char *socket_path = root_atom_contents("I3_SOCKET_PATH", NULL, 0);
                     if (socket_path) {
                         printf("%s\n", socket_path);
+                        /* With -O2 (i.e. the buildtype=debugoptimized meson
+                         * option, which we set by default), gcc 9.2.1 optimizes
+                         * away socket_path at this point, resulting in a Leak
+                         * Sanitizer report. An explicit free helps: */
+                        free(socket_path);
                         exit(EXIT_SUCCESS);
                     }
 
@@ -358,12 +451,12 @@ int main(int argc, char *argv[]) {
                                 "\ti3 floating toggle\n"
                                 "\ti3 kill window\n"
                                 "\n");
-                exit(EXIT_FAILURE);
+                exit(opt == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
         }
     }
 
     if (only_check_config) {
-        exit(parse_configuration(override_configpath, false) ? 0 : 1);
+        exit(load_configuration(override_configpath, C_VALIDATE) ? EXIT_SUCCESS : EXIT_FAILURE);
     }
 
     /* If the user passes more arguments, we act like i3-msg would: Just send
@@ -407,7 +500,7 @@ int main(int argc, char *argv[]) {
         if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(struct sockaddr_un)) < 0)
             err(EXIT_FAILURE, "Could not connect to i3");
 
-        if (ipc_send_message(sockfd, strlen(payload), I3_IPC_MESSAGE_TYPE_COMMAND,
+        if (ipc_send_message(sockfd, strlen(payload), I3_IPC_MESSAGE_TYPE_RUN_COMMAND,
                              (uint8_t *)payload) == -1)
             err(EXIT_FAILURE, "IPC: write()");
         FREE(payload);
@@ -421,8 +514,8 @@ int main(int argc, char *argv[]) {
                 err(EXIT_FAILURE, "IPC: read()");
             return 1;
         }
-        if (reply_type != I3_IPC_MESSAGE_TYPE_COMMAND)
-            errx(EXIT_FAILURE, "IPC: received reply of type %d but expected %d (COMMAND)", reply_type, I3_IPC_MESSAGE_TYPE_COMMAND);
+        if (reply_type != I3_IPC_REPLY_TYPE_COMMAND)
+            errx(EXIT_FAILURE, "IPC: received reply of type %d but expected %d (COMMAND)", reply_type, I3_IPC_REPLY_TYPE_COMMAND);
         printf("%.*s\n", reply_length, reply);
         FREE(reply);
         return 0;
@@ -463,7 +556,7 @@ int main(int argc, char *argv[]) {
 
     conn = xcb_connect(NULL, &conn_screen);
     if (xcb_connection_has_error(conn))
-        errx(EXIT_FAILURE, "Cannot open display\n");
+        errx(EXIT_FAILURE, "Cannot open display");
 
     sndisplay = sn_xcb_display_new(conn, NULL, NULL);
 
@@ -477,10 +570,11 @@ int main(int argc, char *argv[]) {
     root_screen = xcb_aux_get_screen(conn, conn_screen);
     root = root_screen->root;
 
-/* Place requests for the atoms we need as soon as possible */
+    /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \
     xcb_intern_atom_cookie_t atom##_cookie = xcb_intern_atom(conn, 0, strlen(#atom), #atom);
-#include "atoms.xmacro"
+    I3_NET_SUPPORTED_ATOMS_XMACRO
+    I3_REST_ATOMS_XMACRO
 #undef xmacro
 
     root_depth = root_screen->root_depth;
@@ -515,7 +609,7 @@ int main(int argc, char *argv[]) {
     xcb_get_geometry_cookie_t gcookie = xcb_get_geometry(conn, root);
     xcb_query_pointer_cookie_t pointercookie = xcb_query_pointer(conn, root);
 
-/* Setup NetWM atoms */
+    /* Setup NetWM atoms */
 #define xmacro(name)                                                                       \
     do {                                                                                   \
         xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(conn, name##_cookie, NULL); \
@@ -526,10 +620,11 @@ int main(int argc, char *argv[]) {
         A_##name = reply->atom;                                                            \
         free(reply);                                                                       \
     } while (0);
-#include "atoms.xmacro"
+    I3_NET_SUPPORTED_ATOMS_XMACRO
+    I3_REST_ATOMS_XMACRO
 #undef xmacro
 
-    load_configuration(conn, override_configpath, false);
+    load_configuration(override_configpath, C_LOAD);
 
     if (config.ipc_socket_path == NULL) {
         /* Fall back to a file name in /tmp/ based on the PID */
@@ -539,11 +634,18 @@ int main(int argc, char *argv[]) {
             config.ipc_socket_path = sstrdup(config.ipc_socket_path);
     }
 
+    if (config.force_xinerama) {
+        force_xinerama = true;
+    }
+
     xcb_void_cookie_t cookie;
     cookie = xcb_change_window_attributes_checked(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
     xcb_generic_error_t *error = xcb_request_check(conn, cookie);
     if (error != NULL) {
         ELOG("Another window manager seems to be running (X error %d)\n", error->error_code);
+#ifdef I3_ASAN_ENABLED
+        __lsan_do_leak_check();
+#endif
         return 1;
     }
 
@@ -558,12 +660,12 @@ int main(int argc, char *argv[]) {
 
     /* Set a cursor for the root window (otherwise the root window will show no
        cursor until the first client is launched). */
-    if (xcursor_supported)
-        xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
-    else
-        xcb_set_root_cursor(XCURSOR_CURSOR_POINTER);
+    xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
 
     const xcb_query_extension_reply_t *extreply;
+    xcb_prefetch_extension_data(conn, &xcb_xkb_id);
+    xcb_prefetch_extension_data(conn, &xcb_shape_id);
+
     extreply = xcb_get_extension_data(conn, &xcb_xkb_id);
     xkb_supported = extreply->present;
     if (!extreply->present) {
@@ -583,34 +685,63 @@ int main(int argc, char *argv[]) {
         /* Setting both, XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE and
          * XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED, will lead to the
          * X server sending us the full XKB state in KeyPress and KeyRelease:
-         * https://sources.debian.net/src/xorg-server/2:1.17.2-1.1/xkb/xkbEvents.c/?hl=927#L927
+         * https://cgit.freedesktop.org/xorg/xserver/tree/xkb/xkbEvents.c?h=xorg-server-1.20.0#n927
+         *
+         * XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT enable detectable autorepeat:
+         * https://www.x.org/releases/current/doc/kbproto/xkbproto.html#Detectable_Autorepeat
+         * This affects bindings using the --release flag: instead of getting multiple KeyRelease
+         * events we get only one event when the key is physically released by the user.
          */
+        const uint32_t mask = XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE |
+                              XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED |
+                              XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT;
         xcb_xkb_per_client_flags_reply_t *pcf_reply;
         /* The last three parameters are unset because they are only relevant
          * when using a feature called “automatic reset of boolean controls”:
-         * http://www.x.org/releases/X11R7.7/doc/kbproto/xkbproto.html#Automatic_Reset_of_Boolean_Controls
+         * https://www.x.org/releases/X11R7.7/doc/kbproto/xkbproto.html#Automatic_Reset_of_Boolean_Controls
          * */
         pcf_reply = xcb_xkb_per_client_flags_reply(
             conn,
             xcb_xkb_per_client_flags(
                 conn,
                 XCB_XKB_ID_USE_CORE_KBD,
-                XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE | XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED,
-                XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE | XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED,
+                mask,
+                mask,
                 0 /* uint32_t ctrlsToChange */,
                 0 /* uint32_t autoCtrls */,
                 0 /* uint32_t autoCtrlsValues */),
             NULL);
-        if (pcf_reply == NULL ||
-            !(pcf_reply->value & XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE)) {
-            ELOG("Could not set XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE\n");
-        }
-        if (pcf_reply == NULL ||
-            !(pcf_reply->value & XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED)) {
-            ELOG("Could not set XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED\n");
-        }
+
+#define PCF_REPLY_ERROR(_value)                                    \
+    do {                                                           \
+        if (pcf_reply == NULL || !(pcf_reply->value & (_value))) { \
+            ELOG("Could not set " #_value "\n");                   \
+        }                                                          \
+    } while (0)
+
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE);
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED);
+        PCF_REPLY_ERROR(XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT);
+
         free(pcf_reply);
         xkb_base = extreply->first_event;
+    }
+
+    /* Check for Shape extension. We want to handle input shapes which is
+     * introduced in 1.1. */
+    extreply = xcb_get_extension_data(conn, &xcb_shape_id);
+    if (extreply->present) {
+        shape_base = extreply->first_event;
+        xcb_shape_query_version_cookie_t cookie = xcb_shape_query_version(conn);
+        xcb_shape_query_version_reply_t *version =
+            xcb_shape_query_version_reply(conn, cookie, NULL);
+        shape_supported = version && version->minor_version >= 1;
+        free(version);
+    } else {
+        shape_supported = false;
+    }
+    if (!shape_supported) {
+        DLOG("shape 1.1 is not present on this server\n");
     }
 
     restore_connect();
@@ -654,14 +785,14 @@ int main(int argc, char *argv[]) {
         fake_outputs_init(fake_outputs);
         FREE(fake_outputs);
         config.fake_outputs = NULL;
-    } else if (force_xinerama || config.force_xinerama) {
+    } else if (force_xinerama) {
         /* Force Xinerama (for drivers which don't support RandR yet, esp. the
          * nVidia binary graphics driver), when specified either in the config
          * file or on command-line */
         xinerama_init();
     } else {
         DLOG("Checking for XRandR...\n");
-        randr_init(&randr_base);
+        randr_init(&randr_base, disable_randr15 || config.disable_randr15);
     }
 
     /* We need to force disabling outputs which have been loaded from the
@@ -670,10 +801,10 @@ int main(int argc, char *argv[]) {
      * and restarting i3. See #2326. */
     if (layout_path != NULL && randr_base > -1) {
         Con *con;
-        TAILQ_FOREACH(con, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH (con, &(croot->nodes_head), nodes) {
             Output *output;
-            TAILQ_FOREACH(output, &outputs, outputs) {
-                if (output->active || strcmp(con->name, output->name) != 0)
+            TAILQ_FOREACH (output, &outputs, outputs) {
+                if (output->active || strcmp(con->name, output_primary_name(output)) != 0)
                     continue;
 
                 /* This will correctly correlate the output with its content
@@ -703,12 +834,13 @@ int main(int argc, char *argv[]) {
         if (!output) {
             ELOG("ERROR: No screen at (%d, %d), starting on the first screen\n",
                  pointerreply->root_x, pointerreply->root_y);
-            output = get_first_output();
         }
-
-        con_focus(con_descend_focused(output_get_content(output->con)));
-        free(pointerreply);
     }
+    if (!output) {
+        output = get_first_output();
+    }
+    con_activate(con_descend_focused(output_get_content(output->con)));
+    free(pointerreply);
 
     tree_render();
 
@@ -751,25 +883,28 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    {
+        const int restart_fd = parse_restart_fd();
+        if (restart_fd != -1) {
+            DLOG("serving restart fd %d", restart_fd);
+            ipc_client *client = ipc_new_client_on_fd(main_loop, restart_fd);
+            ipc_confirm_restart(client);
+            unsetenv("_I3_RESTART_FD");
+        }
+    }
+
     /* Set up i3 specific atoms like I3_SOCKET_PATH and I3_CONFIG_PATH */
     x_set_i3_atoms();
     ewmh_update_workarea();
 
     /* Set the ewmh desktop properties. */
-    ewmh_update_current_desktop();
-    ewmh_update_number_of_desktops();
-    ewmh_update_desktop_names();
-    ewmh_update_desktop_viewport();
+    ewmh_update_desktop_properties();
 
     struct ev_io *xcb_watcher = scalloc(1, sizeof(struct ev_io));
-    xcb_check = scalloc(1, sizeof(struct ev_check));
-    struct ev_prepare *xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
+    xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
 
     ev_io_init(xcb_watcher, xcb_got_event, xcb_get_file_descriptor(conn), EV_READ);
     ev_io_start(main_loop, xcb_watcher);
-
-    ev_check_init(xcb_check, xcb_check_cb);
-    ev_check_start(main_loop, xcb_check);
 
     ev_prepare_init(xcb_prepare, xcb_prepare_cb);
     ev_prepare_start(main_loop, xcb_prepare);
@@ -840,15 +975,15 @@ int main(int argc, char *argv[]) {
         err(EXIT_FAILURE, "pledge");
 #endif
 
-    struct sigaction action;
-
-    action.sa_sigaction = handle_signal;
-    action.sa_flags = SA_NODEFER | SA_RESETHAND | SA_SIGINFO;
-    sigemptyset(&action.sa_mask);
-
     if (!disable_signalhandler)
         setup_signal_handler();
     else {
+        struct sigaction action;
+
+        action.sa_sigaction = handle_core_signal;
+        action.sa_flags = SA_NODEFER | SA_RESETHAND | SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+
         /* Catch all signals with default action "Core", see signal(7) */
         if (sigaction(SIGQUIT, &action, NULL) == -1 ||
             sigaction(SIGILL, &action, NULL) == -1 ||
@@ -858,14 +993,7 @@ int main(int argc, char *argv[]) {
             ELOG("Could not setup signal handler.\n");
     }
 
-    /* Catch all signals with default action "Term", see signal(7) */
-    if (sigaction(SIGHUP, &action, NULL) == -1 ||
-        sigaction(SIGINT, &action, NULL) == -1 ||
-        sigaction(SIGALRM, &action, NULL) == -1 ||
-        sigaction(SIGUSR1, &action, NULL) == -1 ||
-        sigaction(SIGUSR2, &action, NULL) == -1)
-        ELOG("Could not setup signal handler.\n");
-
+    setup_term_handlers();
     /* Ignore SIGPIPE to survive errors when an IPC client disconnects
      * while we are sending them a message */
     signal(SIGPIPE, SIG_IGN);
@@ -898,17 +1026,18 @@ int main(int argc, char *argv[]) {
 
     /* Start i3bar processes for all configured bars */
     Barconfig *barconfig;
-    TAILQ_FOREACH(barconfig, &barconfigs, configs) {
+    TAILQ_FOREACH (barconfig, &barconfigs, configs) {
         char *command = NULL;
-        sasprintf(&command, "%s --bar_id=%s --socket=\"%s\"",
-                  barconfig->i3bar_command ? barconfig->i3bar_command : "i3bar",
+        sasprintf(&command, "%s %s --bar_id=%s --socket=\"%s\"",
+                  barconfig->i3bar_command ? barconfig->i3bar_command : "exec i3bar",
+                  barconfig->verbose ? "-V" : "",
                   barconfig->id, current_socketpath);
         LOG("Starting bar process: %s\n", command);
         start_application(command, true);
         free(command);
     }
 
-    /* Make sure to destroy the event loop to invoke the cleeanup callbacks
+    /* Make sure to destroy the event loop to invoke the cleanup callbacks
      * when calling exit() */
     atexit(i3_exit);
 

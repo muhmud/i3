@@ -38,6 +38,7 @@ state INITIAL:
   'rename' -> RENAME
   'nop' -> NOP
   'scratchpad' -> SCRATCHPAD
+  'swap' -> SWAP
   'title_format' -> TITLE_FORMAT
   'mode' -> MODE
   'bar' -> BAR
@@ -85,16 +86,16 @@ state DEBUGLOG:
 # border normal|pixel [<n>]
 # border none|1pixel|toggle
 state BORDER:
-  border_style = 'normal', 'pixel'
+  border_style = 'normal', 'pixel', 'toggle'
     -> BORDER_WIDTH
-  border_style = 'none', 'toggle'
+  border_style = 'none'
     -> call cmd_border($border_style, 0)
-  border_style = '1pixel'
-    -> call cmd_border($border_style, 1)
+  '1pixel'
+    -> call cmd_border("pixel", 1)
 
 state BORDER_WIDTH:
   end
-    -> call cmd_border($border_style, 2)
+    -> call cmd_border($border_style, -1)
   border_width = number
     -> call cmd_border($border_style, &border_width)
 
@@ -110,7 +111,7 @@ state LAYOUT:
 state LAYOUT_TOGGLE:
   end
       -> call cmd_layout_toggle($toggle_mode)
-  toggle_mode = 'split', 'all'
+  toggle_mode = string
       -> call cmd_layout_toggle($toggle_mode)
 
 # append_layout <path>
@@ -130,7 +131,7 @@ state WORKSPACE:
       -> call cmd_workspace_back_and_forth()
   'number'
       -> WORKSPACE_NUMBER
-  workspace = string 
+  workspace = string
       -> call cmd_workspace_name($workspace, $no_auto_back_and_forth)
 
 state WORKSPACE_NUMBER:
@@ -145,6 +146,8 @@ state WORKSPACE_NUMBER:
 state FOCUS:
   direction = 'left', 'right', 'up', 'down'
       -> call cmd_focus_direction($direction)
+  direction = 'prev', 'next'
+      -> FOCUS_AUTO
   'output'
       -> FOCUS_OUTPUT
   window_mode = 'tiling', 'floating', 'mode_toggle'
@@ -153,6 +156,12 @@ state FOCUS:
       -> call cmd_focus_level($level)
   end
       -> call cmd_focus()
+
+state FOCUS_AUTO:
+  'sibling'
+      -> call cmd_focus_sibling($direction)
+  end
+      -> call cmd_focus_direction($direction)
 
 state FOCUS_OUTPUT:
   output = string
@@ -242,7 +251,7 @@ state RESIZE_TILING:
   'or'
       -> RESIZE_TILING_OR
   end
-      -> call cmd_resize($way, $direction, &resize_px, 10)
+      -> call cmd_resize($way, $direction, &resize_px, 0)
 
 state RESIZE_TILING_OR:
   resize_ppt = number
@@ -253,18 +262,32 @@ state RESIZE_TILING_FINAL:
       -> call cmd_resize($way, $direction, &resize_px, &resize_ppt)
 
 state RESIZE_SET:
+  'height'
+      -> RESIZE_HEIGHT_GET_NUMBER
+  'width'
+      ->
   width = number
       -> RESIZE_WIDTH
 
 state RESIZE_WIDTH:
-  'px'
+  mode_width = 'px', 'ppt'
       ->
+  end
+      -> call cmd_resize_set(&width, $mode_width, 0, 0)
+  'height'
+      -> RESIZE_HEIGHT_GET_NUMBER
+  height = number
+      -> RESIZE_HEIGHT
+
+state RESIZE_HEIGHT_GET_NUMBER:
   height = number
       -> RESIZE_HEIGHT
 
 state RESIZE_HEIGHT:
-  'px', end
-      -> call cmd_resize_set(&width, &height)
+  mode_height = 'px', 'ppt'
+      ->
+  end
+      -> call cmd_resize_set(&width, $mode_width, &height, $mode_height)
 
 # rename workspace <name> to <name>
 # rename workspace to <name>
@@ -273,35 +296,40 @@ state RENAME:
       -> RENAME_WORKSPACE
 
 state RENAME_WORKSPACE:
-  old_name = 'to'
+  'to'
       -> RENAME_WORKSPACE_LIKELY_TO
   old_name = word
       -> RENAME_WORKSPACE_TO
 
 state RENAME_WORKSPACE_LIKELY_TO:
-  'to'
-      -> RENAME_WORKSPACE_NEW_NAME
+  'to '
+      -> RENAME_WORKSPACE_LIKELY_TO_NEW_NAME
   new_name = word
       -> call cmd_rename_workspace(NULL, $new_name)
 
-state RENAME_WORKSPACE_TO:
-  'to'
-      -> RENAME_WORKSPACE_NEW_NAME
-
-state RENAME_WORKSPACE_NEW_NAME:
+state RENAME_WORKSPACE_LIKELY_TO_NEW_NAME:
+  new_name = string
+      -> call cmd_rename_workspace("to", $new_name)
   end
       -> call cmd_rename_workspace(NULL, "to")
+
+state RENAME_WORKSPACE_TO:
+  'to'
+      -> RENAME_WORKSPACE_TO_NEW_NAME
+
+state RENAME_WORKSPACE_TO_NEW_NAME:
   new_name = string
       -> call cmd_rename_workspace($old_name, $new_name)
 
-# move <direction> [<pixels> [px]]
+
+# move <direction> [<amount> [px|ppt]]
 # move [window|container] [to] workspace [<str>|next|prev|next_on_output|prev_on_output|current]
 # move [window|container] [to] output <str>
 # move [window|container] [to] mark <str>
 # move [window|container] [to] scratchpad
 # move workspace to [output] <str>
 # move scratchpad
-# move [window|container] [to] [absolute] position [ [<pixels> [px] <pixels> [px]] | center ]
+# move [window|container] [to] [absolute] position [ [<pos_x> [px|ppt] <pos_y> [px|ppt] ] | center ]
 # move [window|container] [to] position mouse|cursor|pointer
 state MOVE:
   'window'
@@ -328,16 +356,16 @@ state MOVE:
       -> MOVE_TO_ABSOLUTE_POSITION
 
 state MOVE_DIRECTION:
-  pixels = number
-      -> MOVE_DIRECTION_PX
+  amount = number
+      -> MOVE_DIRECTION_NUMBER
   end
-      -> call cmd_move_direction($direction, 10)
+      -> call cmd_move_direction($direction, 10, "px")
 
-state MOVE_DIRECTION_PX:
-  'px'
-      -> call cmd_move_direction($direction, &pixels)
+state MOVE_DIRECTION_NUMBER:
+  mode = 'px', 'ppt'
+      -> call cmd_move_direction($direction, &amount, $mode)
   end
-      -> call cmd_move_direction($direction, &pixels)
+      -> call cmd_move_direction($direction, &amount, "px")
 
 state MOVE_WORKSPACE:
   'to '
@@ -382,14 +410,16 @@ state MOVE_TO_POSITION:
       -> MOVE_TO_POSITION_X
 
 state MOVE_TO_POSITION_X:
-  'px'
+  mode_x = 'px', 'ppt'
       ->
   coord_y = number
       -> MOVE_TO_POSITION_Y
 
 state MOVE_TO_POSITION_Y:
-  'px', end
-      -> call cmd_move_window_to_position($method, &coord_x, &coord_y)
+  mode_y = 'px', 'ppt'
+      -> call cmd_move_window_to_position(&coord_x, $mode_x, &coord_y, $mode_y)
+  end
+      -> call cmd_move_window_to_position(&coord_x, $mode_x, &coord_y, 0)
 
 # mode <string>
 state MODE:
@@ -406,27 +436,48 @@ state SCRATCHPAD:
   'show'
       -> call cmd_scratchpad_show()
 
+# swap [container] [with] id <window>
+# swap [container] [with] con_id <con_id>
+# swap [container] [with] mark <mark>
+state SWAP:
+  'container'
+      ->
+  'with'
+      ->
+  mode = 'id', 'con_id', 'mark'
+      -> SWAP_ARGUMENT
+
+state SWAP_ARGUMENT:
+  arg = string
+      -> call cmd_swap($mode, $arg)
+
 state TITLE_FORMAT:
   format = string
       -> call cmd_title_format($format)
 
 # bar (hidden_state hide|show|toggle)|(mode dock|hide|invisible|toggle) [<bar_id>]
 state BAR:
-  bar_type = 'hidden_state'
+  'hidden_state'
       -> BAR_HIDDEN_STATE
-  bar_type = 'mode'
+  'mode'
       -> BAR_MODE
 
 state BAR_HIDDEN_STATE:
   bar_value = 'hide', 'show', 'toggle'
-      -> BAR_W_ID
+      -> BAR_HIDDEN_STATE_ID
 
-state BAR_MODE:
-  bar_value = 'dock', 'hide', 'invisible', 'toggle'
-      -> BAR_W_ID
-
-state BAR_W_ID:
+state BAR_HIDDEN_STATE_ID:
   bar_id = word
       ->
   end
-      -> call cmd_bar($bar_type, $bar_value, $bar_id)
+      -> call cmd_bar_hidden_state($bar_value, $bar_id)
+
+state BAR_MODE:
+  bar_value = 'dock', 'hide', 'invisible', 'toggle'
+      -> BAR_MODE_ID
+
+state BAR_MODE_ID:
+  bar_id = word
+      ->
+  end
+      -> call cmd_bar_mode($bar_value, $bar_id)

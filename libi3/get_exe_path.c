@@ -7,17 +7,15 @@
  */
 #include "libi3.h"
 
-#include <unistd.h>
-#include <string.h>
-#include <stdio.h>
-#include <limits.h>
-#include <stdlib.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 /*
  * This function returns the absolute path to the executable it is running in.
  *
- * The implementation follows http://stackoverflow.com/a/933996/712014
+ * The implementation follows https://stackoverflow.com/a/933996/712014
  *
  * Returned value must be freed by the caller.
  */
@@ -91,7 +89,7 @@ char *get_exe_path(const char *argv0) {
         free(destpath);
         sasprintf(&destpath, "%s/%s", component, argv0);
         /* Of course this is not 100% equivalent to actually exec()ing the
-		 * binary, but meh. */
+         * binary, but meh. */
         if (access(destpath, X_OK) == 0) {
             free(path);
             free(tmp);

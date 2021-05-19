@@ -8,14 +8,12 @@
 #include "libi3.h"
 
 #include <assert.h>
+#include <cairo/cairo-xcb.h>
+#include <err.h>
+#include <pango/pangocairo.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
-#include <err.h>
-
-#include <cairo/cairo-xcb.h>
-#include <pango/pangocairo.h>
 
 static const i3Font *savedFont = NULL;
 
@@ -24,24 +22,12 @@ static double pango_font_red;
 static double pango_font_green;
 static double pango_font_blue;
 
-/* Necessary to track whether the dpi changes and trigger a LOG() message,
- * which is more easily visible to users. */
-static double logged_dpi = 0.0;
-
 static PangoLayout *create_layout_with_dpi(cairo_t *cr) {
     PangoLayout *layout;
     PangoContext *context;
 
     context = pango_cairo_create_context(cr);
-    const double dpi = (double)root_screen->height_in_pixels * 25.4 /
-                       (double)root_screen->height_in_millimeters;
-    if (logged_dpi != dpi) {
-        logged_dpi = dpi;
-        LOG("X11 root window dictates %f DPI\n", dpi);
-    } else {
-        DLOG("X11 root window dictates %f DPI\n", dpi);
-    }
-    pango_cairo_context_set_resolution(context, dpi);
+    pango_cairo_context_set_resolution(context, get_dpi_value());
     layout = pango_layout_new(context);
     g_object_unref(context);
 
@@ -121,9 +107,8 @@ static void draw_text_pango(const char *text, size_t text_len,
     cairo_set_source_rgb(cr, pango_font_red, pango_font_green, pango_font_blue);
     pango_cairo_update_layout(cr, layout);
     pango_layout_get_pixel_size(layout, NULL, &height);
-    /* Center the piece of text vertically if its height is smaller than the
-     * cached font height, and just let "high" symbols fall out otherwise. */
-    int yoffset = (height < savedFont->height ? 0.5 : 1) * (height - savedFont->height);
+    /* Center the piece of text vertically. */
+    int yoffset = (height - savedFont->height) / 2;
     cairo_move_to(cr, x, y - yoffset);
     pango_cairo_show_layout(cr, layout);
 
@@ -176,6 +161,7 @@ i3Font load_font(const char *pattern, const bool fallback) {
 
     i3Font font;
     font.type = FONT_TYPE_NONE;
+    font.pattern = NULL;
 
     /* No XCB connction, return early because we're just validating the
      * configuration file. */
@@ -236,9 +222,7 @@ i3Font load_font(const char *pattern, const bool fallback) {
                      error->error_code);
         }
     }
-    if (error != NULL) {
-        free(error);
-    }
+    free(error);
 
     font.pattern = sstrdup(pattern);
     LOG("Using X font %s\n", pattern);
@@ -287,16 +271,12 @@ void free_font(void) {
         case FONT_TYPE_XCB: {
             /* Close the font and free the info */
             xcb_close_font(conn, savedFont->specific.xcb.id);
-            if (savedFont->specific.xcb.info)
-                free(savedFont->specific.xcb.info);
+            free(savedFont->specific.xcb.info);
             break;
         }
         case FONT_TYPE_PANGO:
             /* Free the font description */
             pango_font_description_free(savedFont->specific.pango_desc);
-            break;
-        default:
-            assert(false);
             break;
     }
 
@@ -327,9 +307,6 @@ void set_font_colors(xcb_gcontext_t gc, color_t foreground, color_t background) 
             pango_font_green = foreground.green;
             pango_font_blue = foreground.blue;
             break;
-        default:
-            assert(false);
-            break;
     }
 }
 
@@ -344,7 +321,7 @@ bool font_is_pango(void) {
 static int predict_text_width_xcb(const xcb_char2b_t *text, size_t text_len);
 
 static void draw_text_xcb(const xcb_char2b_t *text, size_t text_len, xcb_drawable_t drawable,
-                          xcb_gcontext_t gc, int x, int y, int max_width) {
+                          xcb_gcontext_t gc, int x, int y) {
     /* X11 coordinates for fonts start at the baseline */
     int pos_y = y + savedFont->specific.xcb.info->font_ascent;
 
@@ -393,15 +370,13 @@ void draw_text(i3String *text, xcb_drawable_t drawable, xcb_gcontext_t gc,
             return;
         case FONT_TYPE_XCB:
             draw_text_xcb(i3string_as_ucs2(text), i3string_get_num_glyphs(text),
-                          drawable, gc, x, y, max_width);
+                          drawable, gc, x, y);
             break;
         case FONT_TYPE_PANGO:
             /* Render the text using Pango */
             draw_text_pango(i3string_as_utf8(text), i3string_get_num_bytes(text),
                             drawable, visual, x, y, max_width, i3string_is_markup(text));
             return;
-        default:
-            assert(false);
     }
 }
 
@@ -437,8 +412,6 @@ void draw_text_ascii(const char *text, xcb_drawable_t drawable,
             draw_text_pango(text, strlen(text),
                             drawable, root_visual_type, x, y, max_width, false);
             return;
-        default:
-            assert(false);
     }
 }
 
@@ -461,6 +434,7 @@ static int xcb_query_text_width(const xcb_char2b_t *text, size_t text_len) {
          * a crash. Plus, the user will see the error in their log. */
         fprintf(stderr, "Could not get text extents (X error code %d)\n",
                 error->error_code);
+        free(error);
         return savedFont->specific.xcb.info->max_bounds.character_width * text_len;
     }
 
@@ -531,8 +505,6 @@ int predict_text_width(i3String *text) {
             /* Calculate extents using Pango */
             return predict_text_width_pango(i3string_as_utf8(text), i3string_get_num_bytes(text),
                                             i3string_is_markup(text));
-        default:
-            assert(false);
-            return 0;
     }
+    assert(false);
 }

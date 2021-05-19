@@ -9,9 +9,33 @@
  */
 #include "all.h"
 
-#include "yajl_utils.h"
+/*
+ * Match frame and window depth. This is needed because X will refuse to reparent a
+ * window whose background is ParentRelative under a window with a different depth.
+ *
+ */
+static xcb_window_t _match_depth(i3Window *win, Con *con) {
+    xcb_window_t old_frame = XCB_NONE;
+    if (con->depth != win->depth) {
+        old_frame = con->frame.id;
+        con->depth = win->depth;
+        x_con_reframe(con);
+    }
+    return old_frame;
+}
 
-#include <yajl/yajl_gen.h>
+/*
+ * Remove all match criteria, the first swallowed window wins.
+ *
+ */
+static void _remove_matches(Con *con) {
+    while (!TAILQ_EMPTY(&(con->swallow_head))) {
+        Match *first = TAILQ_FIRST(&(con->swallow_head));
+        TAILQ_REMOVE(&(con->swallow_head), first, matches);
+        match_free(first);
+        free(first);
+    }
+}
 
 /*
  * Go through all existing windows (if the window manager is restarted) and manage them
@@ -55,15 +79,16 @@ void restore_geometry(void) {
     DLOG("Restoring geometry\n");
 
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons)
-    if (con->window) {
-        DLOG("Re-adding X11 border of %d px\n", con->border_width);
-        con->window_rect.width += (2 * con->border_width);
-        con->window_rect.height += (2 * con->border_width);
-        xcb_set_window_rect(conn, con->window->id, con->window_rect);
-        DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
-        xcb_reparent_window(conn, con->window->id, root,
-                            con->rect.x, con->rect.y);
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
+        if (con->window) {
+            DLOG("Re-adding X11 border of %d px\n", con->border_width);
+            con->window_rect.width += (2 * con->border_width);
+            con->window_rect.height += (2 * con->border_width);
+            xcb_set_window_rect(conn, con->window->id, con->window_rect);
+            DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
+            xcb_reparent_window(conn, con->window->id, root,
+                                con->rect.x, con->rect.y);
+        }
     }
 
     /* Strictly speaking, this line doesn’t really belong here, but since we
@@ -80,6 +105,8 @@ void restore_geometry(void) {
  */
 void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cookie,
                    bool needs_to_be_mapped) {
+    DLOG("window 0x%08x\n", window);
+
     xcb_drawable_t d = {window};
     xcb_get_geometry_cookie_t geomc;
     xcb_get_geometry_reply_t *geom;
@@ -163,8 +190,6 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     wm_user_time_cookie = GET_PROPERTY(A__NET_WM_USER_TIME, UINT32_MAX);
     wm_desktop_cookie = GET_PROPERTY(A__NET_WM_DESKTOP, UINT32_MAX);
 
-    DLOG("Managing window 0x%08x\n", window);
-
     i3Window *cwindow = scalloc(1, sizeof(i3Window));
     cwindow->id = window;
     cwindow->depth = get_visual_depth(attr->visual);
@@ -174,20 +199,18 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     FREE(buttons);
 
     /* update as much information as possible so far (some replies may be NULL) */
-    window_update_class(cwindow, xcb_get_property_reply(conn, class_cookie, NULL), true);
-    window_update_name_legacy(cwindow, xcb_get_property_reply(conn, title_cookie, NULL), true);
-    window_update_name(cwindow, xcb_get_property_reply(conn, utf8_title_cookie, NULL), true);
+    window_update_class(cwindow, xcb_get_property_reply(conn, class_cookie, NULL));
+    window_update_name_legacy(cwindow, xcb_get_property_reply(conn, title_cookie, NULL));
+    window_update_name(cwindow, xcb_get_property_reply(conn, utf8_title_cookie, NULL));
     window_update_leader(cwindow, xcb_get_property_reply(conn, leader_cookie, NULL));
     window_update_transient_for(cwindow, xcb_get_property_reply(conn, transient_cookie, NULL));
     window_update_strut_partial(cwindow, xcb_get_property_reply(conn, strut_cookie, NULL));
-    window_update_role(cwindow, xcb_get_property_reply(conn, role_cookie, NULL), true);
+    window_update_role(cwindow, xcb_get_property_reply(conn, role_cookie, NULL));
     bool urgency_hint;
     window_update_hints(cwindow, xcb_get_property_reply(conn, wm_hints_cookie, NULL), &urgency_hint);
     border_style_t motif_border_style = BS_NORMAL;
     window_update_motif_hints(cwindow, xcb_get_property_reply(conn, motif_wm_hints_cookie, NULL), &motif_border_style);
-    xcb_size_hints_t wm_size_hints;
-    if (!xcb_icccm_get_wm_size_hints_reply(conn, wm_normal_hints_cookie, &wm_size_hints, NULL))
-        memset(&wm_size_hints, '\0', sizeof(xcb_size_hints_t));
+    window_update_normal_hints(cwindow, xcb_get_property_reply(conn, wm_normal_hints_cookie, NULL), geom);
     xcb_get_property_reply_t *type_reply = xcb_get_property_reply(conn, wm_type_cookie, NULL);
     xcb_get_property_reply_t *state_reply = xcb_get_property_reply(conn, state_cookie, NULL);
 
@@ -219,7 +242,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         LOG("This window is of type dock\n");
         Output *output = get_output_containing(geom->x, geom->y);
         if (output != NULL) {
-            DLOG("Starting search at output %s\n", output->name);
+            DLOG("Starting search at output %s\n", output_primary_name(output));
             search_at = output->con;
         }
 
@@ -246,22 +269,32 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
 
     DLOG("Initial geometry: (%d, %d, %d, %d)\n", geom->x, geom->y, geom->width, geom->height);
 
-    Con *nc = NULL;
-    Match *match = NULL;
-    Assignment *assignment;
-
-    /* TODO: two matches for one container */
-
     /* See if any container swallows this new window */
-    nc = con_for_window(search_at, cwindow, &match);
+    cwindow->swallowed = false;
+    Match *match = NULL;
+    Con *nc = con_for_window(search_at, cwindow, &match);
     const bool match_from_restart_mode = (match && match->restart_mode);
     if (nc == NULL) {
         Con *wm_desktop_ws = NULL;
+        Assignment *assignment;
 
         /* If not, check if it is assigned to a specific workspace */
-        if ((assignment = assignment_for(cwindow, A_TO_WORKSPACE))) {
+        if ((assignment = assignment_for(cwindow, A_TO_WORKSPACE)) ||
+            (assignment = assignment_for(cwindow, A_TO_WORKSPACE_NUMBER))) {
             DLOG("Assignment matches (%p)\n", match);
-            Con *assigned_ws = workspace_get(assignment->dest.workspace, NULL);
+
+            Con *assigned_ws = NULL;
+            if (assignment->type == A_TO_WORKSPACE_NUMBER) {
+                long parsed_num = ws_name_to_number(assignment->dest.workspace);
+
+                assigned_ws = get_existing_workspace_by_num(parsed_num);
+            }
+            /* A_TO_WORKSPACE type assignment or fallback from A_TO_WORKSPACE_NUMBER
+             * when the target workspace number does not exist yet. */
+            if (!assigned_ws) {
+                assigned_ws = workspace_get(assignment->dest.workspace);
+            }
+
             nc = con_descend_tiling_focused(assigned_ws);
             DLOG("focused on ws %s: %p / %s\n", assigned_ws->name, nc, nc->name);
             if (nc->type == CT_WORKSPACE)
@@ -290,7 +323,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         } else if (startup_ws) {
             /* If it was started on a specific workspace, we want to open it there. */
             DLOG("Using workspace on which this application was started (%s)\n", startup_ws);
-            nc = con_descend_tiling_focused(workspace_get(startup_ws, NULL));
+            nc = con_descend_tiling_focused(workspace_get(startup_ws));
             DLOG("focused on ws %s: %p / %s\n", startup_ws, nc, nc->name);
             if (nc->type == CT_WORKSPACE)
                 nc = tree_open_con(nc, cwindow);
@@ -304,6 +337,10 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
                 nc = focused;
             } else
                 nc = tree_open_con(NULL, cwindow);
+        }
+
+        if ((assignment = assignment_for(cwindow, A_TO_OUTPUT))) {
+            con_move_to_output_name(nc, assignment->dest.output, true);
         }
     } else {
         /* M_BELOW inserts the new window as a child of the one which was
@@ -322,6 +359,8 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
             match_free(match);
             FREE(match);
         }
+
+        cwindow->swallowed = true;
     }
 
     DLOG("new container = %p\n", nc);
@@ -330,16 +369,13 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
             DLOG("Uh?! Container without a placeholder, but with a window, has swallowed this to-be-managed window?!\n");
         } else {
             /* Remove remaining criteria, the first swallowed window wins. */
-            while (!TAILQ_EMPTY(&(nc->swallow_head))) {
-                Match *first = TAILQ_FIRST(&(nc->swallow_head));
-                TAILQ_REMOVE(&(nc->swallow_head), first, matches);
-                match_free(first);
-                free(first);
-            }
+            _remove_matches(nc);
         }
     }
+    xcb_window_t old_frame = XCB_NONE;
     if (nc->window != cwindow && nc->window != NULL) {
         window_free(nc->window);
+        old_frame = _match_depth(cwindow, nc);
     }
     nc->window = cwindow;
     x_reinit(nc);
@@ -353,9 +389,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
 
     /* handle fullscreen containers */
     Con *ws = con_get_workspace(nc);
-    Con *fs = (ws ? con_get_fullscreen_con(ws, CF_OUTPUT) : NULL);
-    if (fs == NULL)
-        fs = con_get_fullscreen_con(croot, CF_GLOBAL);
+    Con *fs = con_get_fullscreen_covering_ws(ws);
 
     if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_FULLSCREEN)) {
         /* If this window is already fullscreen (after restarting!), skip
@@ -367,7 +401,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
              * needed e.g. for LibreOffice Impress multi-monitor
              * presentations to work out of the box. */
             if (output != NULL)
-                con_move_to_output(nc, output);
+                con_move_to_output(nc, output, false);
             con_toggle_fullscreen(nc, CF_OUTPUT);
         }
         fs = NULL;
@@ -418,10 +452,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_TOOLBAR) ||
         xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_SPLASH) ||
         xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_MODAL) ||
-        (wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE &&
-         wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE &&
-         wm_size_hints.min_height == wm_size_hints.max_height &&
-         wm_size_hints.min_width == wm_size_hints.max_width)) {
+        (cwindow->max_width > 0 && cwindow->max_height > 0 &&
+         cwindow->min_height == cwindow->max_height &&
+         cwindow->min_width == cwindow->max_width)) {
         LOG("This window is a dialog window, setting floating\n");
         want_floating = true;
     }
@@ -480,17 +513,6 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     if (cwindow->dock)
         want_floating = false;
 
-    /* Plasma windows set their geometry in WM_SIZE_HINTS. */
-    if ((wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_US_POSITION || wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_POSITION) &&
-        (wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_US_SIZE || wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_SIZE)) {
-        DLOG("We are setting geometry according to wm_size_hints x=%d y=%d w=%d h=%d\n",
-             wm_size_hints.x, wm_size_hints.y, wm_size_hints.width, wm_size_hints.height);
-        geom->x = wm_size_hints.x;
-        geom->y = wm_size_hints.y;
-        geom->width = wm_size_hints.width;
-        geom->height = wm_size_hints.height;
-    }
-
     /* Store the requested geometry. The width/height gets raised to at least
      * 75x50 when entering floating mode, which is the minimum size for a
      * window to be useful (smaller windows are usually overlays/toolbars/…
@@ -514,7 +536,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
          * was not specified */
         bool automatic_border = (motif_border_style == BS_NORMAL);
 
-        floating_enable(nc, automatic_border);
+        if (floating_enable(nc, automatic_border)) {
+            nc->floating = FLOATING_AUTO_ON;
+        }
     }
 
     /* explicitly set the border width to the default */
@@ -543,6 +567,23 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
      * cleanup) */
     xcb_change_save_set(conn, XCB_SET_MODE_INSERT, window);
 
+    if (shape_supported) {
+        /* Receive ShapeNotify events whenever the client altered its window
+         * shape. */
+        xcb_shape_select_input(conn, window, true);
+
+        /* Check if the window is shaped. Sadly, we can check only for the
+         * bounding shape, not for the input shape. */
+        xcb_shape_query_extents_cookie_t cookie =
+            xcb_shape_query_extents(conn, window);
+        xcb_shape_query_extents_reply_t *reply =
+            xcb_shape_query_extents_reply(conn, cookie, NULL);
+        if (reply != NULL && reply->bounding_shaped) {
+            cwindow->shaped = true;
+        }
+        FREE(reply);
+    }
+
     /* Check if any assignments match */
     run_assignments(cwindow);
 
@@ -564,13 +605,15 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
          * workspace at all. However, just calling render_con() on the
          * workspace isn’t enough either — it needs the rect. */
         ws->rect = ws->parent->rect;
-        render_con(ws, true);
+        render_con(ws);
         /* Disable setting focus, otherwise we’d move focus to an invisible
          * workspace, which we generally prevent (e.g. in
          * con_move_to_workspace). */
         set_focus = false;
     }
-    render_con(croot, false);
+    render_con(croot);
+
+    cwindow->managed_since = time(NULL);
 
     /* Send an event about window creation */
     ipc_send_window_event("new", nc);
@@ -619,10 +662,16 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
      * proper window event sequence. */
     if (set_focus && nc->mapped) {
         DLOG("Now setting focus.\n");
-        con_focus(nc);
+        con_activate(nc);
     }
 
     tree_render();
+
+    /* Destroy the old frame if we had to reframe the container. This needs to be done
+     * after rendering in order to prevent the background from flickering in its place. */
+    if (old_frame != XCB_NONE) {
+        xcb_destroy_window(conn, old_frame);
+    }
 
     /* Windows might get managed with the urgency hint already set (Pidgin is
      * known to do that), so check for that and handle the hint accordingly.
@@ -641,5 +690,64 @@ geom_out:
     free(geom);
 out:
     free(attr);
-    return;
+}
+
+/*
+ * Remanages a window: performs a swallow check and runs assignments.
+ * Returns con for the window regardless if it updated.
+ *
+ */
+Con *remanage_window(Con *con) {
+    /* Make sure this windows hasn't already been swallowed. */
+    if (con->window->swallowed) {
+        run_assignments(con->window);
+        return con;
+    }
+    Match *match;
+    Con *nc = con_for_window(croot, con->window, &match);
+    if (nc == NULL || nc->window == NULL || nc->window == con->window) {
+        run_assignments(con->window);
+        return con;
+    }
+    /* Make sure the placeholder that wants to swallow this window didn't spawn
+     * after the window to follow current behavior: adding a placeholder won't
+     * swallow windows currently managed. */
+    if (nc->window->managed_since > con->window->managed_since) {
+        run_assignments(con->window);
+        return con;
+    }
+
+    if (!restore_kill_placeholder(nc->window->id)) {
+        DLOG("Uh?! Container without a placeholder, but with a window, has swallowed this managed window?!\n");
+    } else {
+        _remove_matches(nc);
+    }
+    window_free(nc->window);
+
+    xcb_window_t old_frame = _match_depth(con->window, nc);
+
+    x_reparent_child(nc, con);
+
+    bool moved_workpaces = (con_get_workspace(nc) != con_get_workspace(con));
+
+    con_merge_into(con, nc);
+
+    /* Destroy the old frame if we had to reframe the container. This needs to be done
+     * after rendering in order to prevent the background from flickering in its place. */
+    if (old_frame != XCB_NONE) {
+        xcb_destroy_window(conn, old_frame);
+    }
+
+    run_assignments(nc->window);
+
+    if (moved_workpaces) {
+        /* If the window is associated with a startup sequence, delete it so
+         * child windows won't be created on the old workspace. */
+        startup_sequence_delete_by_window(nc->window);
+
+        ewmh_update_wm_desktop();
+    }
+
+    nc->window->swallowed = true;
+    return nc;
 }

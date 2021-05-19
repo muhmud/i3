@@ -27,6 +27,7 @@ typedef enum { M_DOCK = 0,
 typedef struct binding_t {
     int input_code;
     char *command;
+    bool release;
 
     TAILQ_ENTRY(binding_t) bindings;
 } binding_t;
@@ -38,14 +39,17 @@ typedef struct tray_output_t {
 } tray_output_t;
 
 typedef struct config_t {
-    int modifier;
+    uint32_t modifier;
     TAILQ_HEAD(bindings_head, binding_t) bindings;
     position_t position;
-    int verbose;
+    bool verbose;
+    bool transparency;
     struct xcb_color_strings_t colors;
     bool disable_binding_mode_indicator;
     bool disable_ws;
+    int ws_min_width;
     bool strip_ws_numbers;
+    bool strip_ws_name;
     char *bar_id;
     char *command;
     char *fontname;
@@ -62,7 +66,7 @@ typedef struct config_t {
            S_SHOW = 1 } hidden_state;
 } config_t;
 
-config_t config;
+extern config_t config;
 
 /**
  * Start parsing the received bar configuration JSON string

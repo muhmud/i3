@@ -15,30 +15,24 @@
 #include <config.h>
 
 #include <assert.h>
+#include <err.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdarg.h>
 #include <stdbool.h>
-#include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <locale.h>
-#include <getopt.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <glob.h>
-#include <errno.h>
-#include <err.h>
-#include <stdint.h>
-#include <math.h>
-#include <limits.h>
 
 #include <xcb/xcb.h>
 #include <xcb/xcb_aux.h>
-#include <xcb/xcb_keysyms.h>
 #include <xcb/xcb_icccm.h>
+#include <xcb/xcb_keysyms.h>
 
-#include <yajl/yajl_gen.h>
-#include <yajl/yajl_version.h>
-
+#include "libi3.h"
 #include "data.h"
 #include "util.h"
 #include "ipc.h"
@@ -52,6 +46,7 @@
 #include "click.h"
 #include "key_press.h"
 #include "floating.h"
+#include "drag.h"
 #include "configuration.h"
 #include "handlers.h"
 #include "randr.h"
@@ -70,7 +65,6 @@
 #include "ewmh.h"
 #include "assignments.h"
 #include "regex.h"
-#include "libi3.h"
 #include "startup.h"
 #include "scratchpad.h"
 #include "commands.h"
@@ -81,4 +75,5 @@
 #include "fake_outputs.h"
 #include "display_version.h"
 #include "restore_layout.h"
+#include "sync.h"
 #include "main.h"

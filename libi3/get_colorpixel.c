@@ -6,22 +6,19 @@
  *
  */
 #include "libi3.h"
-
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-
 #include "queue.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 struct Colorpixel {
     char hex[8];
     uint32_t pixel;
 
-    SLIST_ENTRY(Colorpixel)
-    colorpixels;
+    SLIST_ENTRY(Colorpixel) colorpixels;
 };
 
-SLIST_HEAD(colorpixel_head, Colorpixel)
-colorpixels;
+SLIST_HEAD(colorpixel_head, Colorpixel) colorpixels;
 
 /*
  * Returns the colorpixel to use for the given hex color (think of HTML).
@@ -43,12 +40,12 @@ uint32_t get_colorpixel(const char *hex) {
 
     /* Shortcut: if our screen is true color, no need to do a roundtrip to X11 */
     if (root_screen == NULL || root_screen->root_depth == 24 || root_screen->root_depth == 32) {
-        return (0xFF << 24) | (r << 16 | g << 8 | b);
+        return (0xFFUL << 24) | (r << 16 | g << 8 | b);
     }
 
     /* Lookup this colorpixel in the cache */
     struct Colorpixel *colorpixel;
-    SLIST_FOREACH(colorpixel, &(colorpixels), colorpixels) {
+    SLIST_FOREACH (colorpixel, &(colorpixels), colorpixels) {
         if (strcmp(colorpixel->hex, hex) == 0)
             return colorpixel->pixel;
     }
@@ -60,8 +57,7 @@ uint32_t get_colorpixel(const char *hex) {
 
     xcb_alloc_color_reply_t *reply;
 
-    reply = xcb_alloc_color_reply(conn, xcb_alloc_color(conn, root_screen->default_colormap,
-                                                        r16, g16, b16),
+    reply = xcb_alloc_color_reply(conn, xcb_alloc_color(conn, root_screen->default_colormap, r16, g16, b16),
                                   NULL);
 
     if (!reply) {

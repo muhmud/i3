@@ -10,6 +10,8 @@
  */
 #include "all.h"
 
+#include <math.h>
+
 /* Forward declarations */
 static int *precalculate_sizes(Con *con, render_params *p);
 static void render_root(Con *con, Con *fullscreen);
@@ -37,16 +39,15 @@ int render_deco_height(void) {
  * updated in X11.
  *
  */
-void render_con(Con *con, bool render_fullscreen) {
+void render_con(Con *con) {
     render_params params = {
         .rect = con->rect,
         .x = con->rect.x,
         .y = con->rect.y,
         .children = con_num_children(con)};
 
-    DLOG("Rendering %snode %p / %s / layout %d / children %d\n",
-         (render_fullscreen ? "fullscreen " : ""), con, con->name, con->layout,
-         params.children);
+    DLOG("Rendering node %p / %s / layout %d / children %d\n", con, con->name,
+         con->layout, params.children);
 
     int i = 0;
     con->mapped = true;
@@ -57,47 +58,21 @@ void render_con(Con *con, bool render_fullscreen) {
          * needs to be smaller */
         Rect *inset = &(con->window_rect);
         *inset = (Rect){0, 0, con->rect.width, con->rect.height};
-        if (!render_fullscreen)
+        if (con->fullscreen_mode == CF_NONE) {
             *inset = rect_add(*inset, con_border_style_rect(con));
+        }
 
         /* Obey x11 border */
         inset->width -= (2 * con->border_width);
         inset->height -= (2 * con->border_width);
 
-        /* Obey the aspect ratio, if any, unless we are in fullscreen mode.
-         *
-         * The spec isn’t explicit on whether the aspect ratio hints should be
-         * respected during fullscreen mode. Other WMs such as Openbox don’t do
-         * that, and this post suggests that this is the correct way to do it:
-         * http://mail.gnome.org/archives/wm-spec-list/2003-May/msg00007.html
-         *
-         * Ignoring aspect ratio during fullscreen was necessary to fix MPlayer
-         * subtitle rendering, see http://bugs.i3wm.org/594 */
-        if (!render_fullscreen && con->window->aspect_ratio > 0.0) {
-            DLOG("aspect_ratio = %f, current width/height are %d/%d\n",
-                 con->window->aspect_ratio, inset->width, inset->height);
-            double new_height = inset->height + 1;
-            int new_width = inset->width;
-
-            while (new_height > inset->height) {
-                new_height = (1.0 / con->window->aspect_ratio) * new_width;
-
-                if (new_height > inset->height)
-                    new_width--;
-            }
-            /* Center the window */
-            inset->y += ceil(inset->height / 2) - floor((new_height + .5) / 2);
-            inset->x += ceil(inset->width / 2) - floor(new_width / 2);
-
-            inset->height = new_height + .5;
-            inset->width = new_width;
-        }
+        *inset = rect_sanitize_dimensions(*inset);
 
         /* NB: We used to respect resize increment size hints for tiling
          * windows up until commit 0db93d9 here. However, since all terminal
          * emulators cope with ignoring the size hints in a better way than we
          * can (by providing their fake-transparency or background color), this
-         * code was removed. See also http://bugs.i3wm.org/540 */
+         * code was removed. See also https://bugs.i3wm.org/540 */
 
         DLOG("child will be at %dx%d with size %dx%d\n", inset->x, inset->y, inset->width, inset->height);
     }
@@ -110,13 +85,13 @@ void render_con(Con *con, bool render_fullscreen) {
     if (fullscreen) {
         fullscreen->rect = params.rect;
         x_raise_con(fullscreen);
-        render_con(fullscreen, true);
+        render_con(fullscreen);
         /* Fullscreen containers are either global (underneath the CT_ROOT
          * container) or per-output (underneath the CT_CONTENT container). For
          * global fullscreen containers, we cannot abort rendering here yet,
          * because the floating windows (with popup_during_fullscreen smart)
          * have not yet been rendered (see the CT_ROOT code path below). See
-         * also http://bugs.i3wm.org/1393 */
+         * also https://bugs.i3wm.org/1393 */
         if (con->type != CT_ROOT) {
             return;
         }
@@ -137,7 +112,7 @@ void render_con(Con *con, bool render_fullscreen) {
         render_root(con, fullscreen);
     } else {
         Con *child;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             assert(params.children > 0);
 
             if (con->layout == L_SPLITH || con->layout == L_SPLITV) {
@@ -150,30 +125,33 @@ void render_con(Con *con, bool render_fullscreen) {
                 render_con_dockarea(con, child, &params);
             }
 
+            child->rect = rect_sanitize_dimensions(child->rect);
+
             DLOG("child at (%d, %d) with (%d x %d)\n",
                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
             x_raise_con(child);
-            render_con(child, false);
+            render_con(child);
             i++;
         }
 
         /* in a stacking or tabbed container, we ensure the focused client is raised */
         if (con->layout == L_STACKED || con->layout == L_TABBED) {
-            TAILQ_FOREACH_REVERSE(child, &(con->focus_head), focus_head, focused)
-            x_raise_con(child);
+            TAILQ_FOREACH_REVERSE (child, &(con->focus_head), focus_head, focused) {
+                x_raise_con(child);
+            }
             if ((child = TAILQ_FIRST(&(con->focus_head)))) {
                 /* By rendering the stacked container again, we handle the case
-             * that we have a non-leaf-container inside the stack. In that
-             * case, the children of the non-leaf-container need to be raised
-             * as well. */
-                render_con(child, false);
+                 * that we have a non-leaf-container inside the stack. In that
+                 * case, the children of the non-leaf-container need to be
+                 * raised as well. */
+                render_con(child);
             }
 
             if (params.children != 1)
-                /* Raise the stack con itself. This will put the stack decoration on
-             * top of every stack window. That way, when a new window is opened in
-             * the stack, the old window will not obscure part of the decoration
-             * (it’s unmapped afterwards). */
+                /* Raise the stack con itself. This will put the stack
+                 * decoration on top of every stack window. That way, when a
+                 * new window is opened in the stack, the old window will not
+                 * obscure part of the decoration (it’s unmapped afterwards). */
                 x_raise_con(con);
         }
     }
@@ -183,26 +161,28 @@ free_params:
 }
 
 static int *precalculate_sizes(Con *con, render_params *p) {
-    int *sizes = smalloc(p->children * sizeof(int));
-    if ((con->layout == L_SPLITH || con->layout == L_SPLITV) && p->children > 0) {
-        assert(!TAILQ_EMPTY(&con->nodes_head));
+    if ((con->layout != L_SPLITH && con->layout != L_SPLITV) || p->children <= 0) {
+        return NULL;
+    }
 
-        Con *child;
-        int i = 0, assigned = 0;
-        int total = con_orientation(con) == HORIZ ? p->rect.width : p->rect.height;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
-            double percentage = child->percent > 0.0 ? child->percent : 1.0 / p->children;
-            assigned += sizes[i++] = percentage * total;
-        }
-        assert(assigned == total ||
-               (assigned > total && assigned - total <= p->children * 2) ||
-               (assigned < total && total - assigned <= p->children * 2));
-        int signal = assigned < total ? 1 : -1;
-        while (assigned != total) {
-            for (i = 0; i < p->children && assigned != total; ++i) {
-                sizes[i] += signal;
-                assigned += signal;
-            }
+    int *sizes = smalloc(p->children * sizeof(int));
+    assert(!TAILQ_EMPTY(&con->nodes_head));
+
+    Con *child;
+    int i = 0, assigned = 0;
+    int total = con_rect_size_in_orientation(con);
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
+        double percentage = child->percent > 0.0 ? child->percent : 1.0 / p->children;
+        assigned += sizes[i++] = lround(percentage * total);
+    }
+    assert(assigned == total ||
+           (assigned > total && assigned - total <= p->children * 2) ||
+           (assigned < total && total - assigned <= p->children * 2));
+    int signal = assigned < total ? 1 : -1;
+    while (assigned != total) {
+        for (i = 0; i < p->children && assigned != total; ++i) {
+            sizes[i] += signal;
+            assigned += signal;
         }
     }
 
@@ -212,8 +192,8 @@ static int *precalculate_sizes(Con *con, render_params *p) {
 static void render_root(Con *con, Con *fullscreen) {
     Con *output;
     if (!fullscreen) {
-        TAILQ_FOREACH(output, &(con->nodes_head), nodes) {
-            render_con(output, false);
+        TAILQ_FOREACH (output, &(con->nodes_head), nodes) {
+            render_con(output);
         }
     }
 
@@ -222,7 +202,7 @@ static void render_root(Con *con, Con *fullscreen) {
      * all times. This is important when the user places floating
      * windows/containers so that they overlap on another output. */
     DLOG("Rendering floating windows:\n");
-    TAILQ_FOREACH(output, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (output, &(con->nodes_head), nodes) {
         if (con_is_internal(output))
             continue;
         /* Get the active workspace of that output */
@@ -232,25 +212,22 @@ static void render_root(Con *con, Con *fullscreen) {
             continue;
         }
         Con *workspace = TAILQ_FIRST(&(content->focus_head));
-        Con *fullscreen = con_get_fullscreen_con(workspace, CF_OUTPUT);
+        Con *fullscreen = con_get_fullscreen_covering_ws(workspace);
         Con *child;
-        TAILQ_FOREACH(child, &(workspace->floating_head), floating_windows) {
-            /* Don’t render floating windows when there is a fullscreen window
-             * on that workspace. Necessary to make floating fullscreen work
-             * correctly (ticket #564). */
-            /* If there is no fullscreen->window, this cannot be a
-             * transient window, so we _know_ we need to skip it. This
-             * happens during restarts where the container already exists,
-             * but the window was not yet associated. */
-            if (fullscreen != NULL && fullscreen->window == NULL)
-                continue;
-            if (fullscreen != NULL && fullscreen->window != NULL) {
+        TAILQ_FOREACH (child, &(workspace->floating_head), floating_windows) {
+            if (fullscreen != NULL) {
+                /* Don’t render floating windows when there is a fullscreen
+                 * window on that workspace. Necessary to make floating
+                 * fullscreen work correctly (ticket #564). Exception to the
+                 * above rule: smart popup_during_fullscreen handling (popups
+                 * belonging to the fullscreen app will be rendered). */
+                if (config.popup_during_fullscreen != PDF_SMART || fullscreen->window == NULL) {
+                    continue;
+                }
+
                 Con *floating_child = con_descend_focused(child);
                 Con *transient_con = floating_child;
                 bool is_transient_for = false;
-                /* Exception to the above rule: smart
-                 * popup_during_fullscreen handling (popups belonging to
-                 * the fullscreen app will be rendered). */
                 while (transient_con != NULL &&
                        transient_con->window != NULL &&
                        transient_con->window->transient_for != XCB_NONE) {
@@ -282,7 +259,7 @@ static void render_root(Con *con, Con *fullscreen) {
             DLOG("floating child at (%d,%d) with %d x %d\n",
                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
             x_raise_con(child);
-            render_con(child, false);
+            render_con(child);
         }
     }
 }
@@ -302,7 +279,7 @@ static void render_output(Con *con) {
     /* Find the content container and ensure that there is exactly one. Also
      * check for any non-CT_DOCKAREA clients. */
     Con *content = NULL;
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (child->type == CT_CON) {
             if (content != NULL) {
                 DLOG("More than one CT_CON on output container\n");
@@ -332,25 +309,26 @@ static void render_output(Con *con) {
     if (fullscreen) {
         fullscreen->rect = con->rect;
         x_raise_con(fullscreen);
-        render_con(fullscreen, true);
+        render_con(fullscreen);
         return;
     }
 
     /* First pass: determine the height of all CT_DOCKAREAs (the sum of their
      * children) and figure out how many pixels we have left for the rest */
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (child->type != CT_DOCKAREA)
             continue;
 
         child->rect.height = 0;
-        TAILQ_FOREACH(dockchild, &(child->nodes_head), nodes)
-        child->rect.height += dockchild->geometry.height;
+        TAILQ_FOREACH (dockchild, &(child->nodes_head), nodes) {
+            child->rect.height += dockchild->geometry.height;
+        }
 
         height -= child->rect.height;
     }
 
     /* Second pass: Set the widths/heights */
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (child->type == CT_CON) {
             child->rect.x = x;
             child->rect.y = y;
@@ -372,7 +350,7 @@ static void render_output(Con *con) {
         DLOG("child at (%d, %d) with (%d x %d)\n",
              child->rect.x, child->rect.y, child->rect.width, child->rect.height);
         x_raise_con(child);
-        render_con(child, false);
+        render_con(child);
     }
 }
 
@@ -448,7 +426,7 @@ static void render_con_tabbed(Con *con, Con *child, render_params *p, int i) {
     /* Since the tab width may be something like 31,6 px per tab, we
      * let the last tab have all the extra space (0,6 * children). */
     if (i == (p->children - 1)) {
-        child->deco_rect.width += (child->rect.width - (child->deco_rect.x + child->deco_rect.width));
+        child->deco_rect.width = child->rect.width - child->deco_rect.x;
     }
 
     if (p->children > 1 || (child->border_style != BS_PIXEL && child->border_style != BS_NONE)) {

@@ -19,7 +19,7 @@
 typedef struct i3_output i3_output;
 
 SLIST_HEAD(outputs_head, i3_output);
-struct outputs_head* outputs;
+extern struct outputs_head* outputs;
 
 /*
  * Start parsing the received JSON string
@@ -32,6 +32,12 @@ void parse_outputs_json(char* json);
  *
  */
 void init_outputs(void);
+
+/*
+ * free() all outputs data structures.
+ *
+ */
+void free_outputs(void);
 
 /*
  * Returns the output with the given name

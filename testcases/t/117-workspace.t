@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -129,6 +129,21 @@ cmd "workspace aa: $tmp";
 $ws = get_ws("aa: $tmp");
 ok(defined($ws), "workspace aa: $tmp was created");
 is($ws->{num}, -1, 'workspace number is -1');
+
+cmd "workspace -42: $tmp";
+$ws = get_ws("-42: $tmp");
+ok(defined($ws), "workspace -42: $tmp was created");
+is($ws->{num}, -1, 'negative workspace number is ignored');
+
+cmd "workspace 2147483647: $tmp";
+$ws = get_ws("2147483647: $tmp");
+ok(defined($ws), "workspace 2147483647: $tmp was created");
+is($ws->{num}, 2147483647, 'workspace number is 2147483647');
+
+cmd "workspace 2147483648: $tmp";
+$ws = get_ws("2147483648: $tmp");
+ok(defined($ws), "workspace 2147483648: $tmp was created");
+is($ws->{num}, -1, 'workspace number past the limit is ignored');
 
 ################################################################################
 # Check that we can go to workspace "4: foo" with the command
@@ -279,6 +294,12 @@ is(focused_ws(), 'bla', 'now on workspace bla');
 cmd 'rename workspace to to';
 ok(!workspace_exists('bla'), 'workspace bla does not exist anymore');
 is(focused_ws(), 'to', 'now on workspace to');
+cmd 'rename workspace to bla';
+ok(!workspace_exists('to'), 'workspace to does not exist anymore');
+is(focused_ws(), 'bla', 'now on workspace bla');
+cmd 'rename workspace to tosomething';
+ok(!workspace_exists('bla'), 'workspace bla does not exist anymore');
+is(focused_ws(), 'tosomething', 'now on workspace tosomething');
 
 # 6: already existing workspace
 my $result = cmd 'rename workspace qux to 11: bar';

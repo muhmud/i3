@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -24,7 +24,7 @@ use i3test;
 sub send_net_active_window {
     my ($id, $source) = @_;
 
-    $source = ($source eq 'pager' ? 2 : 0);
+    $source = (((defined $source) && ($source eq 'pager')) ? 2 : 0);
 
     my $msg = pack "CCSLLLLLLL",
         X11::XCB::CLIENT_MESSAGE, # response_type
@@ -137,7 +137,7 @@ is($x->input_focus, $win3->id, 'window 3 still focused');
 # is received.
 ################################################################################
 
-my $scratch = open_window;
+$scratch = open_window;
 
 is($x->input_focus, $scratch->id, 'to-scratchpad window has focus');
 
@@ -148,6 +148,22 @@ is($x->input_focus, $win3->id, 'focus reverted to window 3');
 send_net_active_window($scratch->id, 'pager');
 
 is($x->input_focus, $scratch->id, 'scratchpad window is shown');
+
+################################################################################
+# Send a _NET_ACTIVE_WINDOW ClientMessage for a window behind a fullscreen
+# window
+################################################################################
+
+$ws1 = fresh_workspace;
+$win1 = open_window;
+$win2 = open_window;
+cmd 'fullscreen enable';
+is_num_fullscreen($ws1, 1, '1 fullscreen window in workspace');
+
+send_net_active_window($win1->id);
+
+is($x->input_focus, $win1->id, 'window behind fullscreen window is now focused');
+is_num_fullscreen($ws1, 0, 'no fullscreen windows in workspace');
 
 ################################################################################
 # Verify that the _NET_ACTIVE_WINDOW property is updated on the root window

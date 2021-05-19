@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -95,7 +95,19 @@ EOT
 
 is(launch_get_border($config), 'none', 'no border');
 
+#####################################################################
+# test that variables with longer name than value don't crash i3 with
+# v3 to v4 conversion.
+# See: #3076
+#####################################################################
 
+$config = <<'EOT';
+set $var a
+EOT
+
+my $pid = launch_with_config($config);
+does_i3_live;
+exit_gracefully($pid);
 
 done_testing;
 

@@ -2,13 +2,13 @@
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:
-# • http://build.i3wm.org/docs/testsuite.html
+# • https://build.i3wm.org/docs/testsuite.html
 #   (or docs/testsuite)
 #
-# • http://build.i3wm.org/docs/lib-i3test.html
+# • https://build.i3wm.org/docs/lib-i3test.html
 #   (alternatively: perldoc ./testcases/lib/i3test.pm)
 #
-# • http://build.i3wm.org/docs/ipc.html
+# • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
@@ -122,6 +122,24 @@ $pid = launch_with_config($config);
 
 @names = @{get_workspace_names()};
 is_deeply(\@names, [ '3' ], 'i3 starts on workspace 3');
+
+exit_gracefully($pid);
+
+##############################################################
+# 7: verify optional flags do not affect startup workspace
+##############################################################
+
+$config = <<EOT;
+# i3 config file (v4)
+font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
+
+bindsym Mod1+1 workspace --no-auto-back-and-forth number 3:three
+EOT
+
+$pid = launch_with_config($config);
+
+@names = @{get_workspace_names()};
+is_deeply(\@names, [ '3:three' ], 'i3 starts on named workspace 3:three');
 
 exit_gracefully($pid);
 

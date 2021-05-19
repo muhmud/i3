@@ -10,15 +10,17 @@
 #include "all.h"
 
 /*
- * Returns the output container below the given output container.
+ * Returns the content container below the given output container.
  *
  */
 Con *output_get_content(Con *output) {
     Con *child;
 
-    TAILQ_FOREACH(child, &(output->nodes_head), nodes)
-    if (child->type == CT_CON)
-        return child;
+    TAILQ_FOREACH (child, &(output->nodes_head), nodes) {
+        if (child->type == CT_CON) {
+            return child;
+        }
+    }
 
     return NULL;
 }
@@ -41,21 +43,21 @@ Output *get_output_from_string(Output *current_output, const char *output_str) {
         return get_output_next_wrap(D_DOWN, current_output);
     }
 
-    return get_output_by_name(output_str);
+    return get_output_by_name(output_str, true);
+}
+
+/*
+ * Retrieves the primary name of an output.
+ *
+ */
+char *output_primary_name(Output *output) {
+    return SLIST_FIRST(&output->names_head)->name;
 }
 
 Output *get_output_for_con(Con *con) {
     Con *output_con = con_get_output(con);
-    if (output_con == NULL) {
-        ELOG("Could not get the output container for con = %p.\n", con);
-        return NULL;
-    }
-
-    Output *output = get_output_by_name(output_con->name);
-    if (output == NULL) {
-        ELOG("Could not get output from name \"%s\".\n", output_con->name);
-        return NULL;
-    }
+    Output *output = get_output_by_name(output_con->name, true);
+    assert(output != NULL);
 
     return output;
 }
@@ -64,10 +66,17 @@ Output *get_output_for_con(Con *con) {
  * Iterates over all outputs and pushes sticky windows to the currently visible
  * workspace on that output.
  *
+ * old_focus is used to determine if a sticky window is going to be focused.
+ * old_focus might be different than the currently focused container because the
+ * caller might need to temporarily change the focus and then call
+ * output_push_sticky_windows. For example, workspace_show needs to set focus to
+ * one of its descendants first, then call output_push_sticky_windows that
+ * should focus a sticky window if it was the focused in the previous workspace.
+ *
  */
-void output_push_sticky_windows(Con *to_focus) {
+void output_push_sticky_windows(Con *old_focus) {
     Con *output;
-    TAILQ_FOREACH(output, &(croot->focus_head), focused) {
+    TAILQ_FOREACH (output, &(croot->focus_head), focused) {
         Con *workspace, *visible_ws = NULL;
         GREP_FIRST(visible_ws, output_get_content(output), workspace_is_visible(child));
 
@@ -87,11 +96,17 @@ void output_push_sticky_windows(Con *to_focus) {
                  child != TAILQ_END(&(current_ws->focus_head));) {
                 Con *current = child;
                 child = TAILQ_NEXT(child, focused);
-                if (current->type != CT_FLOATING_CON)
+                if (current->type != CT_FLOATING_CON || !con_is_sticky(current)) {
                     continue;
+                }
 
-                if (con_is_sticky(current)) {
-                    con_move_to_workspace(current, visible_ws, true, false, current != to_focus->parent);
+                bool ignore_focus = (old_focus == NULL) || (current != old_focus->parent);
+                con_move_to_workspace(current, visible_ws, true, false, ignore_focus);
+                if (!ignore_focus) {
+                    Con *current_ws = con_get_workspace(focused);
+                    con_activate(con_descend_focused(current));
+                    /* Pushing sticky windows shouldn't change the focused workspace. */
+                    con_activate(con_descend_focused(current_ws));
                 }
             }
         }
