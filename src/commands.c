@@ -61,15 +61,15 @@
         HANDLE_INVALID_MATCH;                           \
                                                         \
         if (match_is_empty(current_match)) {            \
-            while (!TAILQ_EMPTY(&owindows)) {           \
-                owindow *ow = TAILQ_FIRST(&owindows);   \
-                TAILQ_REMOVE(&owindows, ow, owindows);  \
+            while (!TAILQ_EMPTY(&OWINDOWS)) {           \
+                owindow *ow = TAILQ_FIRST(&OWINDOWS);   \
+                TAILQ_REMOVE(&OWINDOWS, ow, owindows);  \
                 free(ow);                               \
             }                                           \
             owindow *ow = smalloc(sizeof(owindow));     \
             ow->con = focused;                          \
-            TAILQ_INIT(&owindows);                      \
-            TAILQ_INSERT_TAIL(&owindows, ow, owindows); \
+            TAILQ_INIT(&OWINDOWS);                      \
+            TAILQ_INSERT_TAIL(&OWINDOWS, ow, owindows); \
         }                                               \
     } while (0)
 
@@ -124,19 +124,8 @@ static Con *maybe_auto_back_and_forth_workspace(Con *workspace) {
  * Criteria functions.
  ******************************************************************************/
 
-/*
- * Helper data structure for an operation window (window on which the operation
- * will be performed). Used to build the TAILQ owindows.
- *
- */
-typedef struct owindow {
-    Con *con;
-    TAILQ_ENTRY(owindow) owindows;
-} owindow;
-
-typedef TAILQ_HEAD(owindows_head, owindow) owindows_head;
-
-static owindows_head owindows;
+/* Macro to access owindows from the command output context */
+#define OWINDOWS (cmd_output->ctx->owindows)
 
 /*
  * Initializes the specified 'Match' data structure and the initial state of
@@ -158,12 +147,12 @@ void cmd_criteria_match_windows(I3_CMD) {
     DLOG("match specification finished, matching...\n");
 
     /* Clear old queue */
-    while (!TAILQ_EMPTY(&owindows)) {
-        owindow *ow = TAILQ_FIRST(&owindows);
-        TAILQ_REMOVE(&owindows, ow, owindows);
+    while (!TAILQ_EMPTY(&OWINDOWS)) {
+        owindow *ow = TAILQ_FIRST(&OWINDOWS);
+        TAILQ_REMOVE(&OWINDOWS, ow, owindows);
         free(ow);
     }
-    TAILQ_INIT(&owindows);
+    TAILQ_INIT(&OWINDOWS);
 
     /* Go through all cons and find matches */
     Con *con;
@@ -220,7 +209,7 @@ void cmd_criteria_match_windows(I3_CMD) {
             DLOG("matching: %p / %s\n", con, con->name);
             owindow *ow = smalloc(sizeof(owindow));
             ow->con = con;
-            TAILQ_INSERT_TAIL(&owindows, ow, owindows);
+            TAILQ_INSERT_TAIL(&OWINDOWS, ow, owindows);
         }
     }
 }
@@ -234,9 +223,9 @@ void cmd_criteria_add(I3_CMD, const char *ctype, const char *cvalue) {
     match_parse_property(current_match, ctype, cvalue);
 }
 
-static void move_matches_to_workspace(Con *ws) {
+static void move_matches_to_workspace(struct owindows_head *owindows, Con *ws) {
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, owindows, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
         con_move_to_workspace(current->con, ws, true, false, false);
     }
@@ -245,17 +234,17 @@ static void move_matches_to_workspace(Con *ws) {
 #define CHECK_MOVE_CON_TO_WORKSPACE                                                          \
     do {                                                                                     \
         HANDLE_EMPTY_MATCH;                                                                  \
-        if (TAILQ_EMPTY(&owindows)) {                                                        \
+        if (TAILQ_EMPTY(&OWINDOWS)) {                                                        \
             yerror("Nothing to move: specified criteria don't match any window");            \
             return;                                                                          \
         } else {                                                                             \
             bool found = false;                                                              \
-            owindow *current = TAILQ_FIRST(&owindows);                                       \
+            owindow *current = TAILQ_FIRST(&OWINDOWS);                                       \
             while (current) {                                                                \
                 owindow *next = TAILQ_NEXT(current, owindows);                               \
                                                                                              \
                 if (current->con->type == CT_WORKSPACE && !con_has_children(current->con)) { \
-                    TAILQ_REMOVE(&owindows, current, owindows);                              \
+                    TAILQ_REMOVE(&OWINDOWS, current, owindows);                              \
                 } else {                                                                     \
                     found = true;                                                            \
                 }                                                                            \
@@ -296,7 +285,7 @@ void cmd_move_con_to_workspace(I3_CMD, const char *which) {
         return;
     }
 
-    move_matches_to_workspace(ws);
+    move_matches_to_workspace(&OWINDOWS, ws);
 
     cmd_output->needs_tree_render = true;
     // XXX: default reply for now, make this a better reply
@@ -316,7 +305,7 @@ void cmd_move_con_to_workspace_back_and_forth(I3_CMD) {
 
     HANDLE_EMPTY_MATCH;
 
-    move_matches_to_workspace(ws);
+    move_matches_to_workspace(&OWINDOWS, ws);
 
     cmd_output->needs_tree_render = true;
     // XXX: default reply for now, make this a better reply
@@ -343,7 +332,7 @@ void cmd_move_con_to_workspace_name(I3_CMD, const char *name, const char *no_aut
         ws = maybe_auto_back_and_forth_workspace(ws);
     }
 
-    move_matches_to_workspace(ws);
+    move_matches_to_workspace(&OWINDOWS, ws);
 
     cmd_output->needs_tree_render = true;
     // XXX: default reply for now, make this a better reply
@@ -375,7 +364,7 @@ void cmd_move_con_to_workspace_number(I3_CMD, const char *which, const char *no_
         ws = maybe_auto_back_and_forth_workspace(ws);
     }
 
-    move_matches_to_workspace(ws);
+    move_matches_to_workspace(&OWINDOWS, ws);
 
     cmd_output->needs_tree_render = true;
     // XXX: default reply for now, make this a better reply
@@ -564,7 +553,7 @@ void cmd_resize(I3_CMD, const char *way, const char *direction, long resize_px, 
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         /* Don't handle dock windows (issue #1201) */
         if (current->con->window && current->con->window->dock) {
             DLOG("This is a dock window. Not resizing (con = %p)\n)", current->con);
@@ -644,7 +633,7 @@ void cmd_resize_set(I3_CMD, long cwidth, const char *mode_width, long cheight, c
 
     owindow *current;
     bool success = true;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *floating_con;
         if ((floating_con = con_inside_floating(current->con))) {
             Con *output = con_get_output(floating_con);
@@ -712,7 +701,7 @@ void cmd_border(I3_CMD, const char *border_style_str, long border_width) {
 
     HANDLE_EMPTY_MATCH;
 
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
 
         border_style_t border_style;
@@ -947,14 +936,14 @@ void cmd_workspace_name(I3_CMD, const char *name, const char *_no_auto_back_and_
 void cmd_mark(I3_CMD, const char *mark, const char *mode, const char *toggle) {
     HANDLE_EMPTY_MATCH;
 
-    owindow *current = TAILQ_FIRST(&owindows);
+    owindow *current = TAILQ_FIRST(&OWINDOWS);
     if (current == NULL) {
         yerror("Given criteria don't match a window");
         return;
     }
 
     /* Marks must be unique, i.e., no two windows must have the same mark. */
-    if (current != TAILQ_LAST(&owindows, owindows_head)) {
+    if (current != TAILQ_LAST(&OWINDOWS, owindows_head)) {
         yerror("A mark must not be put onto more than one window");
         return;
     }
@@ -982,7 +971,7 @@ void cmd_unmark(I3_CMD, const char *mark) {
         con_unmark(NULL, mark);
     } else {
         owindow *current;
-        TAILQ_FOREACH (current, &owindows, owindows) {
+        TAILQ_FOREACH (current, &OWINDOWS, owindows) {
             con_unmark(current->con, mark);
         }
     }
@@ -1103,7 +1092,7 @@ void cmd_move_con_to_output(I3_CMD, const char *name, bool move_workspace) {
 
     bool success = false;
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *ws = con_get_workspace(current->con);
         if (con_is_internal(ws)) {
             continue;
@@ -1141,7 +1130,7 @@ void cmd_move_con_to_mark(I3_CMD, const char *mark) {
 
     bool result = true;
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("moving matched window %p / %s to mark \"%s\"\n", current->con, current->con->name, mark);
         result &= con_move_to_mark(current->con, mark);
     }
@@ -1161,7 +1150,7 @@ void cmd_floating(I3_CMD, const char *floating_mode) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
         if (strcmp(floating_mode, "toggle") == 0) {
             DLOG("should toggle mode\n");
@@ -1174,6 +1163,7 @@ void cmd_floating(I3_CMD, const char *floating_mode) {
                 floating_disable(current->con);
             }
         }
+        run_assignments(current->con->window);
     }
 
     cmd_output->needs_tree_render = true;
@@ -1190,7 +1180,7 @@ void cmd_split(I3_CMD, const char *direction) {
 
     owindow *current;
     LOG("splitting in direction %c\n", direction[0]);
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (con_is_docked(current->con)) {
             ELOG("Cannot split a docked container, skipping.\n");
             continue;
@@ -1244,7 +1234,7 @@ void cmd_kill(I3_CMD, const char *kill_mode_str) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         con_close(current->con, kill_mode);
     }
 
@@ -1264,7 +1254,7 @@ void cmd_exec(I3_CMD, const char *nosn, const char *command) {
 
     int count = 0;
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         count++;
     }
 
@@ -1274,7 +1264,7 @@ void cmd_exec(I3_CMD, const char *nosn, const char *command) {
             count);
     }
 
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("should execute %s, no_startup_id = %d\n", command, no_startup_id);
         start_application(command, no_startup_id);
     }
@@ -1286,7 +1276,7 @@ void cmd_exec(I3_CMD, const char *nosn, const char *command) {
     do {                                                                               \
         int count = 0;                                                                 \
         owindow *current;                                                              \
-        TAILQ_FOREACH (current, &owindows, owindows) {                                 \
+        TAILQ_FOREACH (current, &OWINDOWS, owindows) {                                 \
             count++;                                                                   \
         }                                                                              \
                                                                                        \
@@ -1318,7 +1308,7 @@ void cmd_focus_direction(I3_CMD, const char *direction_str) {
     }
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *ws = con_get_workspace(current->con);
         if (!ws || con_is_internal(ws)) {
             continue;
@@ -1345,7 +1335,7 @@ void cmd_focus_sibling(I3_CMD, const char *direction_str) {
 
     const position_t direction = (STARTS_WITH(direction_str, "prev")) ? BEFORE : AFTER;
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *ws = con_get_workspace(current->con);
         if (!ws || con_is_internal(ws)) {
             continue;
@@ -1451,7 +1441,7 @@ void cmd_focus(I3_CMD, bool focus_workspace) {
 
         yerror("You have to specify which window/container should be focused");
         return;
-    } else if (TAILQ_EMPTY(&owindows)) {
+    } else if (TAILQ_EMPTY(&OWINDOWS)) {
         yerror("No window matches given criteria");
         return;
     }
@@ -1460,7 +1450,7 @@ void cmd_focus(I3_CMD, bool focus_workspace) {
 
     Con *__i3_scratch = workspace_get("__i3_scratch");
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *ws = con_get_workspace(current->con);
         /* If no workspace could be found, this was a dock window.
          * Just skip it, you cannot focus dock windows. */
@@ -1504,7 +1494,7 @@ void cmd_fullscreen(I3_CMD, const char *action, const char *fullscreen_mode) {
 
     HANDLE_EMPTY_MATCH;
 
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
         if (strcmp(action, "toggle") == 0) {
             con_toggle_fullscreen(current->con, mode);
@@ -1529,7 +1519,7 @@ void cmd_sticky(I3_CMD, const char *action) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (current->con->window == NULL) {
             ELOG("only containers holding a window can be made sticky, skipping con = %p\n", current->con);
             continue;
@@ -1572,7 +1562,7 @@ void cmd_move_direction(I3_CMD, const char *direction_str, long amount, const ch
     const bool is_ppt = mode && strcmp(mode, "ppt") == 0;
 
     DLOG("moving in direction %s, %ld %s\n", direction_str, amount, mode);
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (con_is_floating(current->con)) {
             DLOG("floating move with %ld %s\n", amount, mode);
             Rect newrect = current->con->parent->rect;
@@ -1620,7 +1610,7 @@ void cmd_layout(I3_CMD, const char *layout_str) {
     DLOG("changing layout to %s (%d)\n", layout_str, layout);
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (con_is_docked(current->con)) {
             ELOG("cannot change layout of a docked container, skipping it.\n");
             continue;
@@ -1652,7 +1642,7 @@ void cmd_layout_toggle(I3_CMD, const char *toggle_mode) {
     if (match_is_empty(current_match)) {
         con_toggle_layout(focused, toggle_mode);
     } else {
-        TAILQ_FOREACH (current, &owindows, owindows) {
+        TAILQ_FOREACH (current, &OWINDOWS, owindows) {
             DLOG("matching: %p / %s\n", current->con, current->con->name);
             con_toggle_layout(current->con, toggle_mode);
         }
@@ -1774,7 +1764,7 @@ void cmd_focus_output(I3_CMD, const char *name) {
 
     HANDLE_EMPTY_MATCH;
 
-    if (TAILQ_EMPTY(&owindows)) {
+    if (TAILQ_EMPTY(&OWINDOWS)) {
         ysuccess(true);
         return;
     }
@@ -1785,7 +1775,7 @@ void cmd_focus_output(I3_CMD, const char *name) {
      * there is no match, fall back to the focused one. */
     owindow *current;
     Con *con = focused;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (!con_is_internal(con_get_workspace(current->con))) {
             con = current->con;
             break;
@@ -1828,7 +1818,7 @@ void cmd_move_window_to_position(I3_CMD, long x, const char *mode_x, long y, con
     owindow *current;
     HANDLE_EMPTY_MATCH;
 
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (!con_is_floating(current->con)) {
             ELOG("Cannot change position. The window/container is not floating\n");
 
@@ -1867,7 +1857,7 @@ void cmd_move_window_to_center(I3_CMD, const char *method) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *floating_con = con_inside_floating(current->con);
         if (floating_con == NULL) {
             ELOG("con %p / %s is not floating, cannot move it to the center.\n",
@@ -1911,7 +1901,7 @@ void cmd_move_window_to_mouse(I3_CMD) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         Con *floating_con = con_inside_floating(current->con);
         if (floating_con == NULL) {
             DLOG("con %p / %s is not floating, cannot move it to the mouse position.\n",
@@ -1937,7 +1927,7 @@ void cmd_move_scratchpad(I3_CMD) {
 
     HANDLE_EMPTY_MATCH;
 
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("matching: %p / %s\n", current->con, current->con->name);
         scratchpad_move(current->con);
     }
@@ -1959,7 +1949,7 @@ void cmd_scratchpad_show(I3_CMD) {
     if (match_is_empty(current_match)) {
         result = scratchpad_show(NULL);
     } else {
-        TAILQ_FOREACH (current, &owindows, owindows) {
+        TAILQ_FOREACH (current, &OWINDOWS, owindows) {
             DLOG("matching: %p / %s\n", current->con, current->con->name);
             result |= scratchpad_show(current->con);
         }
@@ -1977,7 +1967,7 @@ void cmd_scratchpad_show(I3_CMD) {
 void cmd_swap(I3_CMD, const char *mode, const char *arg) {
     HANDLE_EMPTY_MATCH;
 
-    owindow *match = TAILQ_FIRST(&owindows);
+    owindow *match = TAILQ_FIRST(&OWINDOWS);
     if (match == NULL) {
         yerror("No match found for swapping.");
         return;
@@ -2016,7 +2006,7 @@ void cmd_swap(I3_CMD, const char *mode, const char *arg) {
         return;
     }
 
-    if (match != TAILQ_LAST(&owindows, owindows_head)) {
+    if (match != TAILQ_LAST(&OWINDOWS, owindows_head)) {
         LOG("More than one container matched the swap command, only using the first one.");
     }
 
@@ -2037,7 +2027,7 @@ void cmd_title_format(I3_CMD, const char *format) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         DLOG("setting title_format for %p / %s\n", current->con, current->con->name);
         FREE(current->con->title_format);
 
@@ -2088,7 +2078,7 @@ void cmd_title_window_icon(I3_CMD, const char *enable, int padding) {
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
-    TAILQ_FOREACH (current, &owindows, owindows) {
+    TAILQ_FOREACH (current, &OWINDOWS, owindows) {
         if (is_toggle) {
             const int current_padding = current->con->window_icon_padding;
             if (padding > 0) {
