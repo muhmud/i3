@@ -29,7 +29,7 @@ static bool parsing_window_rect;
 static bool parsing_geometry;
 static bool parsing_focus;
 static bool parsing_marks;
-struct Match *current_swallow;
+Match *current_swallow;
 static bool swallow_is_empty;
 static int num_marks;
 /* We need to save each container that needs to be marked if we want to support
@@ -302,7 +302,7 @@ static int json_string(void *ctx, const unsigned char *val, size_t len) {
     LOG("string: %.*s for key %s\n", (int)len, val, last_key);
     if (parsing_swallows) {
         char *sval;
-        sasprintf(&sval, "%.*s", len, val);
+        sasprintf(&sval, "%.*s", (int)len, val);
         if (strcasecmp(last_key, "class") == 0) {
             current_swallow->class = regex_new(sval);
             swallow_is_empty = false;
