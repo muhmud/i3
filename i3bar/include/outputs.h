@@ -22,10 +22,10 @@ SLIST_HEAD(outputs_head, i3_output);
 extern struct outputs_head* outputs;
 
 /*
- * Start parsing the received JSON string
+ * Parse the received JSON string
  *
  */
-void parse_outputs_json(char* json);
+void parse_outputs_json(const unsigned char* json, size_t size);
 
 /*
  * Initiate the outputs list
@@ -65,8 +65,6 @@ struct i3_output {
     surface_t statusline_buffer;
     /* How much of statusline_buffer's horizontal space was used on last statusline render. */
     int statusline_width;
-    /* Whether statusline block short texts where used on last statusline render. */
-    bool statusline_short_text;
     /* The actual window on which we draw. */
     surface_t bar;
 

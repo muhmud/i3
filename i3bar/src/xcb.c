@@ -12,6 +12,7 @@
 #include <err.h>
 #include <ev.h>
 #include <i3/ipc.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -138,8 +139,9 @@ int _xcb_request_failed(xcb_void_cookie_t cookie, char *err_msg, int line) {
 }
 
 static uint32_t get_sep_offset(struct status_block *block) {
-    if (!block->no_separator && block->sep_block_width > 0)
+    if (!block->no_separator && block->sep_block_width > 0) {
         return block->sep_block_width / 2 + block->sep_block_width % 2;
+    }
     return 0;
 }
 
@@ -147,12 +149,14 @@ static int get_tray_width(struct tc_head *trayclients) {
     trayclient *trayclient;
     int tray_width = 0;
     TAILQ_FOREACH_REVERSE (trayclient, trayclients, tc_head, tailq) {
-        if (!trayclient->mapped)
+        if (!trayclient->mapped) {
             continue;
+        }
         tray_width += icon_size + logical_px(config.tray_padding);
     }
-    if (tray_width > 0)
+    if (tray_width > 0) {
         tray_width += logical_px(tray_loff_px);
+    }
     return tray_width;
 }
 
@@ -165,8 +169,9 @@ static void draw_separator(i3_output *output, uint32_t x, struct status_block *b
     color_t bar_bg = (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg);
 
     uint32_t sep_offset = get_sep_offset(block);
-    if (TAILQ_NEXT(block, blocks) == NULL || sep_offset == 0)
+    if (TAILQ_NEXT(block, blocks) == NULL || sep_offset == 0) {
         return;
+    }
 
     uint32_t center_x = x - sep_offset;
     if (config.separator_symbol == NULL) {
@@ -184,50 +189,103 @@ static void draw_separator(i3_output *output, uint32_t x, struct status_block *b
     }
 }
 
-static uint32_t predict_statusline_length(bool use_short_text) {
+static void predict_block_length(struct status_block *block) {
+    i3String *text = block->full_text;
+    struct status_block_render_desc *render = &block->full_render;
+    if (block->use_short && block->short_text != NULL) {
+        text = block->short_text;
+        render = &block->short_render;
+    }
+
+    if (i3string_get_num_bytes(text) == 0) {
+        block->render_length = 0;
+        return;
+    }
+
+    render->width = predict_text_width(text);
+    if (block->border) {
+        render->width += logical_px(block->border_left + block->border_right);
+    }
+
+    /* Compute offset and append for text alignment in min_width. */
+    if (block->min_width <= render->width) {
+        render->x_offset = 0;
+        render->x_append = 0;
+    } else {
+        uint32_t padding_width = block->min_width - render->width;
+        switch (block->align) {
+            case ALIGN_LEFT:
+                render->x_append = padding_width;
+                break;
+            case ALIGN_RIGHT:
+                render->x_offset = padding_width;
+                break;
+            case ALIGN_CENTER:
+                render->x_offset = padding_width / 2;
+                render->x_append = padding_width / 2 + padding_width % 2;
+                break;
+        }
+    }
+
+    block->render_length = render->width + render->x_offset + render->x_append;
+}
+
+static uint32_t predict_statusline_length(void) {
     uint32_t width = 0;
     struct status_block *block;
 
     TAILQ_FOREACH (block, &statusline_head, blocks) {
-        i3String *text = block->full_text;
-        struct status_block_render_desc *render = &block->full_render;
-        if (use_short_text && block->short_text != NULL) {
-            text = block->short_text;
-            render = &block->short_render;
-        }
-
-        if (i3string_get_num_bytes(text) == 0)
+        predict_block_length(block);
+        uint32_t block_width = block->render_length;
+        if (block_width == 0) {
             continue;
-
-        render->width = predict_text_width(text);
-        if (block->border)
-            render->width += logical_px(block->border_left + block->border_right);
-
-        /* Compute offset and append for text alignment in min_width. */
-        if (block->min_width <= render->width) {
-            render->x_offset = 0;
-            render->x_append = 0;
-        } else {
-            uint32_t padding_width = block->min_width - render->width;
-            switch (block->align) {
-                case ALIGN_LEFT:
-                    render->x_append = padding_width;
-                    break;
-                case ALIGN_RIGHT:
-                    render->x_offset = padding_width;
-                    break;
-                case ALIGN_CENTER:
-                    render->x_offset = padding_width / 2;
-                    render->x_append = padding_width / 2 + padding_width % 2;
-                    break;
-            }
         }
 
-        width += render->width + render->x_offset + render->x_append;
+        width += block_width;
 
         /* If this is not the last block, add some pixels for a separator. */
-        if (TAILQ_NEXT(block, blocks) != NULL)
+        if (TAILQ_NEXT(block, blocks) != NULL) {
             width += block->sep_block_width;
+        }
+    }
+
+    return width;
+}
+
+static uint32_t switch_block_to_short(struct status_block *block) {
+    /* Skip blocks that have no short form or are already in short form */
+    if (block->short_text == NULL || block->use_short) {
+        return 0;
+    }
+    uint32_t full = block->render_length;
+    block->use_short = true;
+    predict_block_length(block);
+    return full - block->render_length;
+}
+
+static uint32_t adjust_statusline_length(uint32_t max_length) {
+    uint32_t width = predict_statusline_length();
+
+    /* Progressively switch the blocks to short mode */
+    struct status_block *block;
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
+        if (width < max_length) {
+            break;
+        }
+        width -= switch_block_to_short(block);
+
+        /* Provide support for representing a single logical block using multiple
+         * JSON blocks: if one block is shortened, ensure that all other blocks
+         * with the same name are also shortened such that the entire logical block uses
+         * the short form text. */
+        if (block->name) {
+            struct status_block *other;
+            TAILQ_FOREACH (other, &statusline_head, blocks) {
+                if (other->name && !strcmp(other->name, block->name)) {
+                    width -= switch_block_to_short(other);
+                }
+            }
+        }
     }
 
     return width;
@@ -236,7 +294,7 @@ static uint32_t predict_statusline_length(bool use_short_text) {
 /*
  * Redraws the statusline to the output's statusline_buffer
  */
-static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_colors, bool use_short_text) {
+static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_colors) {
     struct status_block *block;
 
     color_t bar_color = (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg);
@@ -254,13 +312,14 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
     TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
         struct status_block_render_desc *render = &block->full_render;
-        if (use_short_text && block->short_text != NULL) {
+        if (block->use_short && block->short_text != NULL) {
             text = block->short_text;
             render = &block->short_render;
         }
 
-        if (i3string_get_num_bytes(text) == 0)
+        if (i3string_get_num_bytes(text) == 0) {
             continue;
+        }
 
         color_t fg_color;
         if (block->urgent) {
@@ -284,10 +343,12 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
                 border_color = colors.urgent_ws_border;
                 bg_color = colors.urgent_ws_bg;
             } else {
-                if (block->border)
+                if (block->border) {
                     border_color = draw_util_hex_to_color(block->border);
-                if (block->background)
+                }
+                if (block->background) {
                     bg_color = draw_util_hex_to_color(block->background);
+                }
             }
 
             /* Draw the border. */
@@ -334,7 +395,7 @@ static void hide_bars(void) {
         }
         xcb_unmap_window(xcb_connection, walk->bar.id);
     }
-    stop_child();
+    stop_children();
 }
 
 /*
@@ -351,7 +412,7 @@ static void unhide_bars(void) {
     uint32_t mask;
     uint32_t values[5];
 
-    cont_child();
+    cont_children();
 
     SLIST_FOREACH (walk, outputs, slist) {
         if (walk->bar.id == XCB_NONE) {
@@ -363,10 +424,11 @@ static void unhide_bars(void) {
                XCB_CONFIG_WINDOW_HEIGHT |
                XCB_CONFIG_WINDOW_STACK_MODE;
         values[0] = walk->rect.x;
-        if (config.position == POS_TOP)
+        if (config.position == POS_TOP) {
             values[1] = walk->rect.y;
-        else
+        } else {
             values[1] = walk->rect.y + walk->rect.h - bar_height;
+        }
         values[2] = walk->rect.w;
         values[3] = bar_height;
         values[4] = XCB_STACK_MODE_ABOVE;
@@ -434,8 +496,9 @@ void init_colors(const struct xcb_color_strings_t *new_colors) {
 static bool execute_custom_command(xcb_keycode_t input_code, bool event_is_release) {
     binding_t *binding;
     TAILQ_FOREACH (binding, &(config.bindings), bindings) {
-        if ((binding->input_code != input_code) || (binding->release != event_is_release))
+        if ((binding->input_code != input_code) || (binding->release != event_is_release)) {
             continue;
+        }
 
         i3_send_msg(I3_IPC_MESSAGE_TYPE_RUN_COMMAND, binding->command);
         return true;
@@ -454,7 +517,7 @@ static void child_handle_button(xcb_button_press_event_t *event, i3_output *outp
     TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text;
         struct status_block_render_desc *render;
-        if (output->statusline_short_text && block->short_text != NULL) {
+        if (block->use_short && block->short_text != NULL) {
             text = block->short_text;
             render = &block->short_render;
         } else {
@@ -500,6 +563,49 @@ static int predict_button_width(int name_width) {
                logical_px(config.ws_min_width));
 }
 
+static char *quote_workspace_name(const char *in) {
+    /* To properly handle workspace names with double quotes in them, we need
+     * to escape the double quotes. We allocate a large enough buffer (twice
+     * the unescaped size is always enough), then we copy character by
+     * character. */
+    const size_t namelen = strlen(in);
+    const size_t len = namelen + strlen("workspace \"\"") + 1;
+    char *out = scalloc(2 * len, 1);
+    memcpy(out, "workspace \"", strlen("workspace \""));
+    size_t inpos, outpos;
+    for (inpos = 0, outpos = strlen("workspace \"");
+         inpos < namelen;
+         inpos++, outpos++) {
+        if (in[inpos] == '"' || in[inpos] == '\\') {
+            out[outpos] = '\\';
+            outpos++;
+        }
+        out[outpos] = in[inpos];
+    }
+    out[outpos] = '"';
+    return out;
+}
+
+static void focus_workspace(i3_ws *ws) {
+    char *buffer = NULL;
+    if (ws->id != 0) {
+        /* Workspace ID has higher precedence since the workspace_command is
+         * allowed to change workspace names as long as it provides a valid ID. */
+        sasprintf(&buffer, "[con_id=%lu] focus workspace", ws->id);
+        goto done;
+    }
+
+    if (ws->canonical_name == NULL) {
+        return;
+    }
+
+    buffer = quote_workspace_name(ws->canonical_name);
+
+done:
+    i3_send_msg(I3_IPC_MESSAGE_TYPE_RUN_COMMAND, buffer);
+    free(buffer);
+}
+
 /*
  * Handle a button press event (i.e. a mouse click on one of our bars).
  * We determine, whether the click occurred on a workspace button or if the scroll-
@@ -526,19 +632,27 @@ static void handle_button(xcb_button_press_event_t *event) {
     /* During button release events, only check for custom commands. */
     const bool event_is_release = (event->response_type & ~0x80) == XCB_BUTTON_RELEASE;
 
-    int32_t x = event->event_x >= 0 ? event->event_x : 0;
+    const int x = (event->event_x >= 0 ? event->event_x : 0) - logical_px(config.padding.x);
+    if (x < 0) {
+        /* Ignore clicks in padding */
+        return;
+    }
+
     int workspace_width = 0;
     i3_ws *cur_ws = NULL, *clicked_ws = NULL, *ws_walk;
 
     TAILQ_FOREACH (ws_walk, walk->workspaces, tailq) {
         int w = predict_button_width(ws_walk->name_width);
-        if (x >= workspace_width && x <= workspace_width + w)
+        if (x >= workspace_width && x <= workspace_width + w) {
             clicked_ws = ws_walk;
-        if (ws_walk->visible)
+        }
+        if (ws_walk->visible) {
             cur_ws = ws_walk;
+        }
         workspace_width += w;
-        if (TAILQ_NEXT(ws_walk, tailq) != NULL)
+        if (TAILQ_NEXT(ws_walk, tailq) != NULL) {
             workspace_width += logical_px(ws_spacing_px);
+        }
     }
 
     if (child_want_click_events() && x > workspace_width) {
@@ -583,8 +697,9 @@ static void handle_button(xcb_button_press_event_t *event) {
              * If there is no more workspace, don’t even send the workspace
              * command, otherwise (with workspace auto_back_and_forth) we’d end
              * up on the wrong workspace. */
-            if (cur_ws == TAILQ_FIRST(walk->workspaces))
+            if (cur_ws == TAILQ_FIRST(walk->workspaces)) {
                 return;
+            }
 
             cur_ws = TAILQ_PREV(cur_ws, ws_head, tailq);
             break;
@@ -594,8 +709,9 @@ static void handle_button(xcb_button_press_event_t *event) {
              * If there is no more workspace, don’t even send the workspace
              * command, otherwise (with workspace auto_back_and_forth) we’d end
              * up on the wrong workspace. */
-            if (cur_ws == TAILQ_LAST(walk->workspaces, ws_head))
+            if (cur_ws == TAILQ_LAST(walk->workspaces, ws_head)) {
                 return;
+            }
 
             cur_ws = TAILQ_NEXT(cur_ws, tailq);
             break;
@@ -606,51 +722,23 @@ static void handle_button(xcb_button_press_event_t *event) {
              * workspace if it is not already focused */
             if (cur_ws == NULL) {
                 TAILQ_FOREACH (cur_ws, walk->workspaces, tailq) {
-                    if (cur_ws->visible && !cur_ws->focused)
+                    if (cur_ws->visible && !cur_ws->focused) {
                         break;
+                    }
                 }
             }
 
             /* if there is nothing to focus, we are done */
-            if (cur_ws == NULL)
+            if (cur_ws == NULL) {
                 return;
+            }
 
             break;
         default:
             return;
     }
 
-    /* To properly handle workspace names with double quotes in them, we need
-     * to escape the double quotes. Unfortunately, that’s rather ugly in C: We
-     * first count the number of double quotes, then we allocate a large enough
-     * buffer, then we copy character by character. */
-    int num_quotes = 0;
-    size_t namelen = 0;
-    const char *utf8_name = cur_ws->canonical_name;
-    for (const char *walk = utf8_name; *walk != '\0'; walk++) {
-        if (*walk == '"' || *walk == '\\')
-            num_quotes++;
-        /* While we’re looping through the name anyway, we can save one
-         * strlen(). */
-        namelen++;
-    }
-
-    const size_t len = namelen + strlen("workspace \"\"") + 1;
-    char *buffer = scalloc(len + num_quotes, 1);
-    memcpy(buffer, "workspace \"", strlen("workspace \""));
-    size_t inpos, outpos;
-    for (inpos = 0, outpos = strlen("workspace \"");
-         inpos < namelen;
-         inpos++, outpos++) {
-        if (utf8_name[inpos] == '"' || utf8_name[inpos] == '\\') {
-            buffer[outpos] = '\\';
-            outpos++;
-        }
-        buffer[outpos] = utf8_name[inpos];
-    }
-    buffer[outpos] = '"';
-    i3_send_msg(I3_IPC_MESSAGE_TYPE_RUN_COMMAND, buffer);
-    free(buffer);
+    focus_workspace(cur_ws);
 }
 
 /*
@@ -674,9 +762,9 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
     }
 
     if (num_visible == 0) {
-        stop_child();
+        stop_children();
     } else {
-        cont_child();
+        cont_children();
     }
 }
 
@@ -824,12 +912,10 @@ static void handle_client_message(xcb_client_message_event_t *event) {
         DLOG("_NET_SYSTEM_TRAY_OPCODE received\n");
         /* event->data.data32[0] is the timestamp */
         uint32_t op = event->data.data32[1];
-        uint32_t mask;
         uint32_t values[2];
         if (op == SYSTEM_TRAY_REQUEST_DOCK) {
-            xcb_window_t client = event->data.data32[2];
-
-            mask = XCB_CW_EVENT_MASK;
+            const xcb_window_t client = event->data.data32[2];
+            uint32_t mask = XCB_CW_EVENT_MASK;
 
             /* Needed to get the most recent value of XEMBED_MAPPED. */
             values[0] = XCB_EVENT_MASK_PROPERTY_CHANGE;
@@ -872,8 +958,9 @@ static void handle_client_message(xcb_client_message_event_t *event) {
                 DLOG("xembed flags = %d\n", xembed[1]);
                 map_it = ((xembed[1] & XEMBED_MAPPED) == XEMBED_MAPPED);
                 xe_version = xembed[0];
-                if (xe_version > 1)
+                if (xe_version > 1) {
                     xe_version = 1;
+                }
                 free(xembedr);
             } else {
                 ELOG("Window %08x violates the XEMBED protocol, _XEMBED_INFO not set\n", client);
@@ -891,8 +978,9 @@ static void handle_client_message(xcb_client_message_event_t *event) {
                                                             output_for_tray->bar.id,
                                                             output_for_tray->rect.w - icon_size - logical_px(config.tray_padding),
                                                             logical_px(config.tray_padding));
-            if (xcb_request_failed(rcookie, "Could not reparent window. Maybe it is using an incorrect depth/visual?"))
+            if (xcb_request_failed(rcookie, "Could not reparent window. Maybe it is using an incorrect depth/visual?")) {
                 return;
+            }
 
             /* We reconfigure the window to use a reasonable size. The systray
              * specification explicitly says:
@@ -1091,17 +1179,20 @@ static void handle_configuration_change(xcb_window_t window) {
     trayclient *trayclient;
     i3_output *output;
     SLIST_FOREACH (output, outputs, slist) {
-        if (!output->active)
+        if (!output->active) {
             continue;
+        }
 
         int clients = 0;
         TAILQ_FOREACH_REVERSE (trayclient, output->trayclients, tc_head, tailq) {
-            if (!trayclient->mapped)
+            if (!trayclient->mapped) {
                 continue;
+            }
             clients++;
 
-            if (trayclient->win != window)
+            if (trayclient->win != window) {
                 continue;
+            }
 
             xcb_rectangle_t rect;
             rect.x = output->rect.w - (clients * (icon_size + logical_px(config.tray_padding)));
@@ -1348,8 +1439,9 @@ static void deregister_xkb_keyevents(void) {
  *
  */
 void init_xcb_late(char *fontname) {
-    if (fontname == NULL)
+    if (fontname == NULL) {
         fontname = "-misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1";
+    }
 
     /* Load the font */
     font = load_font(fontname, true);
@@ -1377,13 +1469,15 @@ void init_xcb_late(char *fontname) {
     bar_height = default_px + padding_scaled;
     icon_size = bar_height - 2 * logical_px(config.tray_padding);
 
-    if (config.separator_symbol)
+    if (config.separator_symbol) {
         separator_symbol_width = predict_text_width(config.separator_symbol);
+    }
 
     xcb_flush(xcb_connection);
 
-    if (config.hide_on_modifier == M_HIDE)
+    if (config.hide_on_modifier == M_HIDE) {
         register_xkb_keyevents();
+    }
 }
 
 /*
@@ -1419,11 +1513,15 @@ static void send_tray_clientmessage(void) {
 static void init_tray(void) {
     DLOG("Initializing system tray functionality\n");
     /* request the tray manager atom for the X11 display we are running on */
-    char atomname[strlen("_NET_SYSTEM_TRAY_S") + 11];
-    snprintf(atomname, strlen("_NET_SYSTEM_TRAY_S") + 11, "_NET_SYSTEM_TRAY_S%d", screen);
+    /* The following line cannot use strlen as that makes compilation fail with
+     * some versions of clang (-Wgnu-folding-constant): */
+    const size_t systray_len = strlen("_NET_SYSTEM_TRAY_S") + 11;
+    char atomname[systray_len];
+    snprintf(atomname, systray_len, "_NET_SYSTEM_TRAY_S%d", screen);
     xcb_intern_atom_cookie_t tray_cookie;
-    if (tray_reply == NULL)
+    if (tray_reply == NULL) {
         tray_cookie = xcb_intern_atom(xcb_connection, 0, strlen(atomname), atomname);
+    }
 
     /* tray support: we need a window to own the selection */
     selwin = xcb_generate_id(xcb_connection);
@@ -1590,8 +1688,9 @@ void get_atoms(void) {
  *
  */
 void kick_tray_clients(i3_output *output) {
-    if (TAILQ_EMPTY(output->trayclients))
+    if (TAILQ_EMPTY(output->trayclients)) {
         return;
+    }
 
     trayclient *trayclient;
     while (!TAILQ_EMPTY(output->trayclients)) {
@@ -1830,6 +1929,7 @@ void reconfig_windows(bool redraw_bars) {
                                                8,
                                                len,
                                                class);
+            free(class);
 
             char *name;
             sasprintf(&name, "i3bar for output %s", walk->name);
@@ -1886,10 +1986,11 @@ void reconfig_windows(bool redraw_bars) {
                    XCB_CONFIG_WINDOW_HEIGHT |
                    XCB_CONFIG_WINDOW_STACK_MODE;
             values[0] = walk->rect.x;
-            if (config.position == POS_TOP)
+            if (config.position == POS_TOP) {
                 values[1] = walk->rect.y;
-            else
+            } else {
                 values[1] = walk->rect.y + walk->rect.h - bar_height;
+            }
             values[2] = walk->rect.w;
             values[3] = bar_height;
             values[4] = XCB_STACK_MODE_ABOVE;
@@ -1945,10 +2046,10 @@ void reconfig_windows(bool redraw_bars) {
                 /* Unmap the window, and draw it again when in dock mode */
                 umap_cookie = xcb_unmap_window_checked(xcb_connection, walk->bar.id);
                 if (config.hide_on_modifier == M_DOCK) {
-                    cont_child();
+                    cont_children();
                     map_cookie = xcb_map_window_checked(xcb_connection, walk->bar.id);
                 } else {
-                    stop_child();
+                    stop_children();
                 }
 
                 if (config.hide_on_modifier == M_HIDE) {
@@ -2012,9 +2113,6 @@ static void draw_button(surface_t *surface, color_t fg_color, color_t bg_color, 
 void draw_bars(bool unhide) {
     DLOG("Drawing bars...\n");
 
-    uint32_t full_statusline_width = predict_statusline_length(false);
-    uint32_t short_statusline_width = predict_statusline_length(true);
-
     i3_output *outputs_walk;
     SLIST_FOREACH (outputs_walk, outputs, slist) {
         int workspace_width = logical_px(config.padding.x);
@@ -2065,8 +2163,9 @@ void draw_bars(bool unhide) {
                             workspace_width, w, ws_walk->name_width, ws_walk->name);
 
                 workspace_width += w;
-                if (TAILQ_NEXT(ws_walk, tailq) != NULL)
+                if (TAILQ_NEXT(ws_walk, tailq) != NULL) {
                     workspace_width += logical_px(ws_spacing_px);
+                }
             }
         }
 
@@ -2088,27 +2187,28 @@ void draw_bars(bool unhide) {
             uint32_t hoff = logical_px(((workspace_width > 0) + (tray_width > 0)) * sb_hoff_px);
             uint32_t max_statusline_width = outputs_walk->rect.w - workspace_width - tray_width - hoff;
             uint32_t clip_left = 0;
-            uint32_t statusline_width = full_statusline_width;
-            bool use_short_text = false;
+
+            /* Reset short mode between outputs */
+            struct status_block *block;
+            TAILQ_FOREACH (block, &statusline_head, blocks) {
+                block->use_short = false;
+            }
+
+            uint32_t statusline_width = adjust_statusline_length(max_statusline_width);
 
             if (statusline_width > max_statusline_width) {
-                statusline_width = short_statusline_width;
-                use_short_text = true;
-                if (statusline_width > max_statusline_width) {
-                    clip_left = statusline_width - max_statusline_width;
-                }
+                clip_left = statusline_width - max_statusline_width;
             }
 
             int16_t visible_statusline_width = MIN(statusline_width, max_statusline_width);
             int x_dest = outputs_walk->rect.w - tray_width - logical_px((tray_width > 0) * sb_hoff_px) - visible_statusline_width;
             x_dest -= logical_px(config.padding.width);
 
-            draw_statusline(outputs_walk, clip_left, use_focus_colors, use_short_text);
+            draw_statusline(outputs_walk, clip_left, use_focus_colors);
             draw_util_copy_surface(&outputs_walk->statusline_buffer, &outputs_walk->buffer, 0, 0,
                                    x_dest, 0, visible_statusline_width, (int16_t)bar_height);
 
             outputs_walk->statusline_width = statusline_width;
-            outputs_walk->statusline_short_text = use_short_text;
         }
     }
 

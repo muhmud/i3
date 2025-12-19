@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * i3-nagbar is a utility which displays a nag message, for example in the case
@@ -118,7 +118,7 @@ static void start_application(const char *command) {
         if (fork() == 0) {
             /* This is the child */
             execl(_PATH_BSHELL, _PATH_BSHELL, "-c", command, NULL);
-            /* not reached */
+            err(EXIT_FAILURE, "execl return"); /* only reached on error */
         }
         exit(0);
     }
@@ -126,9 +126,11 @@ static void start_application(const char *command) {
 }
 
 static button_t *get_button_at(int16_t x, int16_t y) {
-    for (int c = 0; c < buttoncnt; c++)
-        if (x >= (buttons[c].x) && x <= (buttons[c].x + buttons[c].width))
+    for (int c = 0; c < buttoncnt; c++) {
+        if (x >= (buttons[c].x) && x <= (buttons[c].x + buttons[c].width)) {
             return &buttons[c];
+        }
+    }
 
     return NULL;
 }
@@ -148,11 +150,13 @@ static void handle_button_release(xcb_connection_t *conn, xcb_button_release_eve
     printf("button released on x = %d, y = %d\n",
            event->event_x, event->event_y);
     /* If the user hits the close button, we exit(0) */
-    if (event->event_x >= btn_close.x && event->event_x < btn_close.x + btn_close.width)
+    if (event->event_x >= btn_close.x && event->event_x < btn_close.x + btn_close.width) {
         exit(0);
+    }
     button_t *button = get_button_at(event->event_x, event->event_y);
-    if (!button)
+    if (!button) {
         return;
+    }
 
     /* We need to create a custom script containing our actual command
      * since not every terminal emulator which is contained in
@@ -238,7 +242,7 @@ static int button_draw(button_t *button, int position) {
  * be called from the code with event == NULL or from X with event != NULL.
  *
  */
-static int handle_expose(xcb_connection_t *conn, xcb_expose_event_t *event) {
+static int handle_expose(xcb_connection_t *conn) {
     /* draw background */
     draw_util_clear_surface(&bar, color_background);
     /* draw message */
@@ -460,8 +464,9 @@ int main(int argc, char *argv[]) {
                        buttons[buttoncnt].action);
                 buttoncnt++;
                 printf("now %d buttons\n", buttoncnt);
-                if (optind < argc)
+                if (optind < argc) {
                     optind++;
+                }
                 break;
         }
     }
@@ -470,8 +475,9 @@ int main(int argc, char *argv[]) {
 
     int screens;
     if ((conn = xcb_connect(NULL, &screens)) == NULL ||
-        xcb_connection_has_error(conn))
+        xcb_connection_has_error(conn)) {
         die("Cannot open display");
+    }
 
 /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \
@@ -497,7 +503,7 @@ int main(int argc, char *argv[]) {
     } else {
         /* Yellowish theme for warnings */
         color_button_background = draw_util_hex_to_color("#ffc100");
-        color_background = draw_util_hex_to_color("#ffa8000");
+        color_background = draw_util_hex_to_color("#ffa800");
         color_text = draw_util_hex_to_color("#000000");
         color_border = draw_util_hex_to_color("#ab7100");
         color_border_bottom = draw_util_hex_to_color("#ab7100");
@@ -506,11 +512,6 @@ int main(int argc, char *argv[]) {
     init_dpi();
     font = load_font(pattern, true);
     set_font(&font);
-
-#if defined(__OpenBSD__)
-    if (pledge("stdio rpath wpath cpath getpw proc exec", NULL) == -1)
-        err(EXIT_FAILURE, "pledge");
-#endif
 
     /* Default values if we cannot determine the preferred window position. */
     xcb_rectangle_t win_pos = (xcb_rectangle_t){50, 50, 500, font.height + 2 * MSG_PADDING + BAR_BORDER};
@@ -632,7 +633,7 @@ int main(int argc, char *argv[]) {
         switch (type) {
             case XCB_EXPOSE:
                 if (((xcb_expose_event_t *)event)->count == 0) {
-                    handle_expose(conn, (xcb_expose_event_t *)event);
+                    handle_expose(conn);
                 }
 
                 break;

@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * A "match" is a data structure which acts like a mask or expression to match
@@ -80,6 +80,7 @@ void match_copy(Match *dest, Match *src) {
     DUPLICATE_REGEX(instance);
     DUPLICATE_REGEX(window_role);
     DUPLICATE_REGEX(workspace);
+    DUPLICATE_REGEX(machine);
 }
 
 /*
@@ -167,12 +168,14 @@ bool match_matches_window(Match *match, i3Window *window) {
     }
 
     if (match->workspace != NULL) {
-        if ((con = con_by_window_id(window->id)) == NULL)
+        if ((con = con_by_window_id(window->id)) == NULL) {
             return false;
+        }
 
         Con *ws = con_get_workspace(con);
-        if (ws == NULL)
+        if (ws == NULL) {
             return false;
+        }
 
         if (strcmp(match->workspace->pattern, "__focused__") == 0 &&
             strcmp(ws->name, con_get_workspace(focused)->name) == 0) {
@@ -198,8 +201,9 @@ bool match_matches_window(Match *match, i3Window *window) {
     }
 
     if (match->mark != NULL) {
-        if ((con = con_by_window_id(window->id)) == NULL)
+        if ((con = con_by_window_id(window->id)) == NULL) {
             return false;
+        }
 
         bool matched = false;
         mark_t *mark;

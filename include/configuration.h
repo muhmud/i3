@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * include/configuration.h: Contains all structs/variables for the configurable
@@ -227,6 +227,9 @@ struct Config {
     /** The modifier which needs to be pressed in combination with your mouse
      * buttons to do things with floating windows (move, resize) */
     uint32_t floating_modifier;
+    /** The modifier which needs to be pressed in combination with the floating
+     * modifier and your mouse buttons to swap containers during tiling drag */
+    uint32_t swap_modifier;
 
     /** Maximum and minimum dimensions of a floating window */
     int32_t floating_maximum_width;
@@ -262,6 +265,9 @@ struct Config {
 
         /* just ignore the popup, that is, don’t map it */
         PDF_IGNORE = 2,
+
+        /* display all floating windows */
+        PDF_ALL = 3,
     } popup_during_fullscreen;
 
     /* The number of currently parsed barconfigs */
@@ -271,9 +277,6 @@ struct Config {
 
     /* Gap sizes */
     gaps_t gaps;
-
-    /* Should single containers on a workspace receive a border? */
-    smart_borders_t smart_borders;
 
     /* Disable gaps if there is only one container on the workspace */
     smart_gaps_t smart_gaps;
@@ -334,6 +337,10 @@ struct Barconfig {
     /** Command that should be run to get a statusline, for example 'i3status'.
      * Will be passed to the shell. */
     char *status_command;
+
+    /** Command that should be run to get the workspace buttons. Will be passed
+     * to the shell. */
+    char *workspace_command;
 
     /** Font specification for all text rendered on the bar. */
     char *font;

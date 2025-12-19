@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * scratchpad.c: Moving windows to the scratchpad and making them visible again.
@@ -21,8 +21,7 @@ void scratchpad_move(Con *con) {
         LOG("'move scratchpad' used on a workspace \"%s\". Calling it "
             "recursively on all windows on this workspace.\n",
             con->name);
-        Con *current;
-        current = TAILQ_FIRST(&(con->focus_head));
+        Con *current = TAILQ_FIRST(&(con->focus_head));
         while (current) {
             Con *next = TAILQ_NEXT(current, focused);
             scratchpad_move(current);
@@ -101,8 +100,9 @@ bool scratchpad_show(Con *con) {
     /* If the current con or any of its parents are in fullscreen mode, we
      * first need to disable it before showing the scratchpad con. */
     Con *fs = focused;
-    while (fs && fs->fullscreen_mode == CF_NONE)
+    while (fs && fs->fullscreen_mode == CF_NONE) {
         fs = fs->parent;
+    }
 
     if (fs && fs->type != CT_WORKSPACE) {
         con_toggle_fullscreen(fs, CF_OUTPUT);
@@ -215,8 +215,9 @@ bool scratchpad_show(Con *con) {
  *
  */
 static int _gcd(const int m, const int n) {
-    if (n == 0)
+    if (n == 0) {
         return m;
+    }
     return _gcd(n, (m % n));
 }
 
@@ -254,8 +255,9 @@ void scratchpad_fix_resolution(void) {
     int new_width = -1,
         new_height = -1;
     TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
-        if (output == __i3_output)
+        if (output == __i3_output) {
             continue;
+        }
         DLOG("output %s's resolution: (%d, %d) %d x %d\n",
              output->name, output->rect.x, output->rect.y,
              output->rect.width, output->rect.height);

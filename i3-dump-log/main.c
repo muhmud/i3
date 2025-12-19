@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * i3-dump-log/main.c: Dumps the i3 SHM log to stdout.
@@ -39,8 +39,9 @@ static int ipcfd = -1;
 static void disable_shmlog(void) {
     const char *disablecmd = "debuglog off; shmlog off";
     if (ipc_send_message(ipcfd, strlen(disablecmd),
-                         I3_IPC_MESSAGE_TYPE_COMMAND, (uint8_t *)disablecmd) != 0)
+                         I3_IPC_MESSAGE_TYPE_COMMAND, (uint8_t *)disablecmd) != 0) {
         err(EXIT_FAILURE, "IPC send");
+    }
 
     /* Ensure the command was sent by waiting for the reply: */
     uint32_t reply_length = 0;
@@ -53,8 +54,9 @@ static void disable_shmlog(void) {
 }
 
 static int check_for_wrap(void) {
-    if (wrap_count == header->wrap_count)
+    if (wrap_count == header->wrap_count) {
         return 0;
+    }
 
     /* The log wrapped. Print the remaining content and reset walk to the top
      * of the log. */
@@ -94,8 +96,7 @@ int main(int argc, char *argv[]) {
         {"follow", no_argument, 0, 'f'},
 #endif
         {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
+        {0, 0, 0, 0}};
 
 #if !defined(__OpenBSD__)
     char *options_string = "s:vfVh";
@@ -148,8 +149,9 @@ int main(int argc, char *argv[]) {
             ipcfd = ipc_connect(NULL);
             const char *enablecmd = "debuglog on; shmlog 5242880";
             if (ipc_send_message(ipcfd, strlen(enablecmd),
-                                 I3_IPC_MESSAGE_TYPE_COMMAND, (uint8_t *)enablecmd) != 0)
+                                 I3_IPC_MESSAGE_TYPE_COMMAND, (uint8_t *)enablecmd) != 0) {
                 err(EXIT_FAILURE, "IPC send");
+            }
             /* By the time we receive a reply, I3_SHMLOG_PATH is set: */
             uint32_t reply_length = 0;
             uint8_t *reply = NULL;
@@ -175,8 +177,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (*shmname == '\0')
+    if (*shmname == '\0') {
         errx(EXIT_FAILURE, "Cannot dump log: SHM logging is disabled in i3.");
+    }
 
     struct stat statbuf;
 
@@ -211,8 +214,9 @@ int main(int argc, char *argv[]) {
         /* In case there was a write to the buffer already, skip the first
          * old line, it very likely is mangled. Not a problem, though, the log
          * is chatty enough to have plenty lines left. */
-        while (*walk != '\n')
+        while (*walk != '\n') {
             walk++;
+        }
         walk++;
     }
 

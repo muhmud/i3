@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Tests the swap command.
@@ -19,7 +19,6 @@
 use i3test i3_autostart => 0;
 
 my $config = <<EOT;
-# i3 config file (v4)
 font font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 for_window[class="mark_A"] mark A
@@ -719,7 +718,6 @@ exit_gracefully($pid);
 ###############################################################################
 
 $config = <<EOT;
-# i3 config file (v4)
 font font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 workspace_layout stacking

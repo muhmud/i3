@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * x.c: Interface to X11, transfers our in-memory state to X11 (see also
@@ -101,7 +101,7 @@ void x_push_changes(Con *con);
  * next call to x_push_changes() will make the change visible in X11.
  *
  */
-void x_raise_con(Con *con);
+void x_raise_con(const Con *con);
 
 /**
  * Sets the WM_NAME property (so, no UTF8, but used only for debugging anyways)

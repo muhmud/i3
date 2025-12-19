@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * main.c: Initialization, main loop
@@ -20,7 +20,6 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -37,6 +36,8 @@
 #include "i3-atoms_NET_SUPPORTED.xmacro.h"
 #include "i3-atoms_rest.xmacro.h"
 
+locale_t numericC;
+
 /* The original value of RLIMIT_CORE when i3 was started. We need to restore
  * this before starting any other process, since we set RLIMIT_CORE to
  * RLIM_INFINITY for i3 debugging versions. */
@@ -47,7 +48,7 @@ int listen_fds;
 
 /* We keep the xcb_prepare watcher around to be able to enable and disable it
  * temporarily for drag_pointer(). */
-static struct ev_prepare *xcb_prepare;
+static ev_prepare *xcb_prepare;
 
 char **start_argv;
 
@@ -117,7 +118,7 @@ I3_REST_ATOMS_XMACRO
  * See also man libev(3): "ev_prepare" and "ev_check" - customise your event loop
  *
  */
-static void xcb_got_event(EV_P_ struct ev_io *w, int revents) {
+static void xcb_got_event(EV_P_ ev_io *w, int revents) {
     /* empty, because xcb_prepare_cb are used */
 }
 
@@ -134,9 +135,9 @@ static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
 
     while ((event = xcb_poll_for_event(conn)) != NULL) {
         if (event->response_type == 0) {
-            if (event_is_ignored(event->sequence, 0))
+            if (event_is_ignored(event->sequence, 0)) {
                 DLOG("Expected X11 Error received for sequence %x\n", event->sequence);
-            else {
+            } else {
                 xcb_generic_error_t *error = (xcb_generic_error_t *)event;
                 DLOG("X11 Error received (probably harmless)! sequence 0x%x, error_code = %d\n",
                      error->sequence, error->error_code);
@@ -146,8 +147,7 @@ static void xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
         }
 
         /* Strip off the highest bit (set if the event is generated) */
-        int type = (event->response_type & 0x7F);
-
+        const int type = (event->response_type & 0x7F);
         handle_event(type, event);
 
         free(event);
@@ -238,8 +238,8 @@ static void handle_term_signal(struct ev_loop *loop, ev_signal *signal, int reve
  *
  */
 static void setup_term_handlers(void) {
-    static struct ev_signal signal_watchers[6];
-    size_t num_watchers = sizeof(signal_watchers) / sizeof(signal_watchers[0]);
+    static ev_signal signal_watchers[6];
+    const size_t num_watchers = sizeof(signal_watchers) / sizeof(signal_watchers[0]);
 
     /* We have to rely on libev functionality here and should not use
      * sigaction handlers because we need to invoke the exit handlers
@@ -252,7 +252,7 @@ static void setup_term_handlers(void) {
     ev_signal_init(&signal_watchers[2], handle_term_signal, SIGALRM);
     ev_signal_init(&signal_watchers[3], handle_term_signal, SIGTERM);
     ev_signal_init(&signal_watchers[4], handle_term_signal, SIGUSR1);
-    ev_signal_init(&signal_watchers[5], handle_term_signal, SIGUSR1);
+    ev_signal_init(&signal_watchers[5], handle_term_signal, SIGUSR2);
     for (size_t i = 0; i < num_watchers; i++) {
         ev_signal_start(main_loop, &signal_watchers[i]);
         /* The signal handlers should not block ev_run from returning
@@ -316,14 +316,16 @@ int main(int argc, char *argv[]) {
     int option_index = 0, opt;
 
     setlocale(LC_ALL, "");
+    numericC = newlocale(LC_NUMERIC_MASK, "C", 0);
 
     /* Get the RLIMIT_CORE limit at startup time to restore this before
      * starting processes. */
     getrlimit(RLIMIT_CORE, &original_rlimit_core);
 
     /* Disable output buffering to make redirects in .xsession actually useful for debugging */
-    if (!isatty(fileno(stdout)))
+    if (!isatty(fileno(stdout))) {
         setbuf(stdout, NULL);
+    }
 
     srand(time(NULL));
 
@@ -506,20 +508,22 @@ int main(int argc, char *argv[]) {
         }
 
         int sockfd = socket(AF_LOCAL, SOCK_STREAM, 0);
-        if (sockfd == -1)
+        if (sockfd == -1) {
             err(EXIT_FAILURE, "Could not create socket");
+        }
 
-        struct sockaddr_un addr;
-        memset(&addr, 0, sizeof(struct sockaddr_un));
+        struct sockaddr_un addr = {0};
         addr.sun_family = AF_LOCAL;
         strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
         FREE(socket_path);
-        if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(struct sockaddr_un)) < 0)
+        if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(struct sockaddr_un)) < 0) {
             err(EXIT_FAILURE, "Could not connect to i3");
+        }
 
         if (ipc_send_message(sockfd, strlen(payload), I3_IPC_MESSAGE_TYPE_RUN_COMMAND,
-                             (uint8_t *)payload) == -1)
+                             (uint8_t *)payload) == -1) {
             err(EXIT_FAILURE, "IPC: write()");
+        }
         FREE(payload);
 
         uint32_t reply_length;
@@ -527,13 +531,15 @@ int main(int argc, char *argv[]) {
         uint8_t *reply;
         int ret;
         if ((ret = ipc_recv_message(sockfd, &reply_type, &reply_length, &reply)) != 0) {
-            if (ret == -1)
+            if (ret == -1) {
                 err(EXIT_FAILURE, "IPC: read()");
+            }
             return 1;
         }
-        if (reply_type != I3_IPC_REPLY_TYPE_COMMAND)
+        if (reply_type != I3_IPC_REPLY_TYPE_COMMAND) {
             errx(EXIT_FAILURE, "IPC: received reply of type %d but expected %d (COMMAND)", reply_type, I3_IPC_REPLY_TYPE_COMMAND);
-        printf("%.*s\n", reply_length, reply);
+        }
+        printf("%.*s\n", reply_length, (char *)reply);
         FREE(reply);
         return 0;
     }
@@ -545,44 +551,51 @@ int main(int argc, char *argv[]) {
     if (is_debug_build()) {
         struct rlimit limit = {RLIM_INFINITY, RLIM_INFINITY};
         setrlimit(RLIMIT_CORE, &limit);
+        LOG("CORE DUMPS: You are running a development version of i3, so coredumps were automatically enabled (ulimit -c unlimited).\n");
 
+#ifdef __linux__
         /* The following code is helpful, but not required. We thus don’t pay
          * much attention to error handling, non-linux or other edge cases. */
-        LOG("CORE DUMPS: You are running a development version of i3, so coredumps were automatically enabled (ulimit -c unlimited).\n");
-        size_t cwd_size = 1024;
-        char *cwd = smalloc(cwd_size);
-        char *cwd_ret;
-        while ((cwd_ret = getcwd(cwd, cwd_size)) == NULL && errno == ERANGE) {
-            cwd_size = cwd_size * 2;
-            cwd = srealloc(cwd, cwd_size);
-        }
-        if (cwd_ret != NULL)
+        char *cwd = getcwd(NULL, 0);
+        if (cwd != NULL) {
             LOG("CORE DUMPS: Your current working directory is \"%s\".\n", cwd);
+            free(cwd);
+        }
+        const size_t buffer_size = 1024;
+        char *buffer = scalloc(buffer_size, sizeof(char));
+
         int patternfd;
         if ((patternfd = open("/proc/sys/kernel/core_pattern", O_RDONLY)) >= 0) {
-            memset(cwd, '\0', cwd_size);
-            if (read(patternfd, cwd, cwd_size) > 0)
-                /* a trailing newline is included in cwd */
-                LOG("CORE DUMPS: Your core_pattern is: %s", cwd);
+            if (read(patternfd, buffer, buffer_size - 1) > 0) {
+                /* a trailing newline is included in buffer */
+                LOG("CORE DUMPS: Your core_pattern is: %s", buffer);
+            }
             close(patternfd);
         }
-        free(cwd);
+        free(buffer);
+#endif
     }
 
-    LOG("i3 %s starting\n", i3_version);
+    LOG("i3 %s starting\n", _i3_version);
 
     conn = xcb_connect(NULL, &conn_screen);
-    if (xcb_connection_has_error(conn))
+    if (xcb_connection_has_error(conn)) {
         errx(EXIT_FAILURE, "Cannot open display");
+    }
 
     sndisplay = sn_xcb_display_new(conn, NULL, NULL);
 
     /* Initialize the libev event loop. This needs to be done before loading
      * the config file because the parser will install an ev_child watcher
-     * for the nagbar when config errors are found. */
+     * for the nagbar when config errors are found.
+     *
+     * Main loop must be ev's default loop because (at the moment of writing)
+     * only the default loop can handle ev_child events and reap zombies
+     * (the start_application routine relies on that too). */
     main_loop = EV_DEFAULT;
-    if (main_loop == NULL)
+    if (main_loop == NULL) {
         die("Could not initialize libev. Bad LIBEV_FLAGS?\n");
+    }
 
     root_screen = xcb_aux_get_screen(conn, conn_screen);
     root = root_screen->root;
@@ -678,10 +691,11 @@ int main(int argc, char *argv[]) {
 
     if (config.ipc_socket_path == NULL) {
         /* Fall back to a file name in /tmp/ based on the PID */
-        if ((config.ipc_socket_path = getenv("I3SOCK")) == NULL)
+        if ((config.ipc_socket_path = getenv("I3SOCK")) == NULL) {
             config.ipc_socket_path = get_process_filename("ipc-socket");
-        else
+        } else {
             config.ipc_socket_path = sstrdup(config.ipc_socket_path);
+        }
     }
     /* Create the UNIX domain socket for IPC */
     int ipc_socket = create_socket(config.ipc_socket_path, &current_socketpath);
@@ -751,12 +765,12 @@ int main(int argc, char *argv[]) {
         xcb_set_selection_owner(conn, wm_sn_selection_owner, wm_sn, last_timestamp);
 
         if (selection_reply && selection_reply->owner != XCB_NONE) {
-            unsigned int usleep_time = 100000; /* 0.1 seconds */
-            int check_rounds = 150;            /* Wait for a maximum of 15 seconds */
+            int check_rounds = 150; /* Wait for a maximum of 15 seconds */
             xcb_get_geometry_reply_t *geom_reply = NULL;
 
             DLOG("waiting for old WM_Sn selection owner to exit");
             do {
+                const unsigned int usleep_time = 100000;
                 free(geom_reply);
                 usleep(usleep_time);
                 if (check_rounds-- == 0) {
@@ -777,8 +791,7 @@ int main(int argc, char *argv[]) {
         union {
             xcb_client_message_event_t message;
             char storage[32];
-        } event;
-        memset(&event, 0, sizeof(event));
+        } event = {0};
         event.message.response_type = XCB_CLIENT_MESSAGE;
         event.message.window = root_screen->root;
         event.message.format = 32;
@@ -903,8 +916,9 @@ int main(int argc, char *argv[]) {
 
     xcb_numlock_mask = aio_get_mod_mask_for(XCB_NUM_LOCK, keysyms);
 
-    if (!load_keymap())
+    if (!load_keymap()) {
         die("Could not load keymap\n");
+    }
 
     translate_keysyms();
     grab_all_keys(conn);
@@ -921,14 +935,16 @@ int main(int argc, char *argv[]) {
             rmdir(dir);
         }
     }
-    if (needs_tree_init)
+    if (needs_tree_init) {
         tree_init(greply);
+    }
 
     free(greply);
 
     /* Setup fake outputs for testing */
-    if (fake_outputs == NULL && config.fake_outputs != NULL)
+    if (fake_outputs == NULL && config.fake_outputs != NULL) {
         fake_outputs = config.fake_outputs;
+    }
 
     if (fake_outputs != NULL) {
         fake_outputs_init(fake_outputs);
@@ -953,8 +969,9 @@ int main(int argc, char *argv[]) {
         TAILQ_FOREACH (con, &(croot->nodes_head), nodes) {
             Output *output;
             TAILQ_FOREACH (output, &outputs, outputs) {
-                if (output->active || strcmp(con->name, output_primary_name(output)) != 0)
+                if (output->active || strcmp(con->name, output_primary_name(output)) != 0) {
                     continue;
+                }
 
                 /* This will correctly correlate the output with its content
                  * container. We need to make the connection to properly
@@ -973,28 +990,28 @@ int main(int argc, char *argv[]) {
 
     scratchpad_fix_resolution();
 
-    xcb_query_pointer_reply_t *pointerreply;
     Output *output = NULL;
-    if (!(pointerreply = xcb_query_pointer_reply(conn, pointercookie, NULL))) {
+    xcb_query_pointer_reply_t *pointer_reply = xcb_query_pointer_reply(conn, pointercookie, NULL);
+    if (!pointer_reply) {
         ELOG("Could not query pointer position, using first screen\n");
     } else {
-        DLOG("Pointer at %d, %d\n", pointerreply->root_x, pointerreply->root_y);
-        output = get_output_containing(pointerreply->root_x, pointerreply->root_y);
+        DLOG("Pointer at %d, %d\n", pointer_reply->root_x, pointer_reply->root_y);
+        output = get_output_containing(pointer_reply->root_x, pointer_reply->root_y);
         if (!output) {
             ELOG("ERROR: No screen at (%d, %d), starting on the first screen\n",
-                 pointerreply->root_x, pointerreply->root_y);
+                 pointer_reply->root_x, pointer_reply->root_y);
         }
     }
     if (!output) {
         output = get_first_output();
     }
     con_activate(con_descend_focused(output_get_content(output->con)));
-    free(pointerreply);
+    free(pointer_reply);
 
     tree_render();
 
     /* Listen to the IPC socket for clients */
-    struct ev_io *ipc_io = scalloc(1, sizeof(struct ev_io));
+    ev_io *ipc_io = scalloc(1, sizeof(struct ev_io));
     ev_io_init(ipc_io, ipc_new_client, ipc_socket, EV_READ);
     ev_io_start(main_loop, ipc_io);
 
@@ -1002,10 +1019,11 @@ int main(int argc, char *argv[]) {
     char *log_stream_socket_path = get_process_filename("log-stream-socket");
     int log_socket = create_socket(log_stream_socket_path, &current_log_stream_socket_path);
     free(log_stream_socket_path);
+    ev_io *log_io = NULL;
     if (log_socket == -1) {
         ELOG("Could not create the log socket, i3-dump-log -f will not work\n");
     } else {
-        struct ev_io *log_io = scalloc(1, sizeof(struct ev_io));
+        log_io = scalloc(1, sizeof(ev_io));
         ev_io_init(log_io, log_new_client, log_socket, EV_READ);
         ev_io_start(main_loop, log_io);
     }
@@ -1013,12 +1031,13 @@ int main(int argc, char *argv[]) {
     /* Also handle the UNIX domain sockets passed via socket
      * activation. The parameter 0 means "do not remove the
      * environment variables", we need to be able to reexec. */
+    ev_io *socket_ipc_io = NULL;
     listen_fds = sd_listen_fds(0);
-    if (listen_fds < 0)
+    if (listen_fds < 0) {
         ELOG("socket activation: Error in sd_listen_fds\n");
-    else if (listen_fds == 0)
+    } else if (listen_fds == 0) {
         DLOG("socket activation: no sockets passed\n");
-    else {
+    } else {
         int flags;
         for (int fd = SD_LISTEN_FDS_START;
              fd < (SD_LISTEN_FDS_START + listen_fds);
@@ -1033,9 +1052,9 @@ int main(int argc, char *argv[]) {
                 ELOG("Could not disable FD_CLOEXEC on fd %d\n", fd);
             }
 
-            struct ev_io *ipc_io = scalloc(1, sizeof(struct ev_io));
-            ev_io_init(ipc_io, ipc_new_client, fd, EV_READ);
-            ev_io_start(main_loop, ipc_io);
+            socket_ipc_io = scalloc(1, sizeof(ev_io));
+            ev_io_init(socket_ipc_io, ipc_new_client, fd, EV_READ);
+            ev_io_start(main_loop, socket_ipc_io);
         }
     }
 
@@ -1056,8 +1075,8 @@ int main(int argc, char *argv[]) {
     /* Set the ewmh desktop properties. */
     ewmh_update_desktop_properties();
 
-    struct ev_io *xcb_watcher = scalloc(1, sizeof(struct ev_io));
-    xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
+    ev_io *xcb_watcher = scalloc(1, sizeof(struct ev_io));
+    xcb_prepare = scalloc(1, sizeof(ev_prepare));
 
     ev_io_init(xcb_watcher, xcb_got_event, xcb_get_file_descriptor(conn), EV_READ);
     ev_io_start(main_loop, xcb_watcher);
@@ -1091,13 +1110,14 @@ int main(int argc, char *argv[]) {
             }
 
             /* Strip off the highest bit (set if the event is generated) */
-            int type = (event->response_type & 0x7F);
+            const int type = (event->response_type & 0x7F);
 
             /* We still need to handle MapRequests which are sent in the
              * timespan starting from when we register as a window manager and
              * this piece of code which drops events. */
-            if (type == XCB_MAP_REQUEST)
+            if (type == XCB_MAP_REQUEST) {
                 handle_event(type, event);
+            }
 
             free(event);
         }
@@ -1125,14 +1145,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-#if defined(__OpenBSD__)
-    if (pledge("stdio rpath wpath cpath proc exec unix", NULL) == -1)
-        err(EXIT_FAILURE, "pledge");
-#endif
-
-    if (!disable_signalhandler)
+    if (!disable_signalhandler) {
         setup_signal_handler();
-    else {
+    } else {
         struct sigaction action;
 
         action.sa_sigaction = handle_core_signal;
@@ -1144,8 +1159,9 @@ int main(int argc, char *argv[]) {
             sigaction(SIGILL, &action, NULL) == -1 ||
             sigaction(SIGABRT, &action, NULL) == -1 ||
             sigaction(SIGFPE, &action, NULL) == -1 ||
-            sigaction(SIGSEGV, &action, NULL) == -1)
+            sigaction(SIGSEGV, &action, NULL) == -1) {
             ELOG("Could not setup signal handler.\n");
+        }
     }
 
     setup_term_handlers();
@@ -1196,6 +1212,23 @@ int main(int argc, char *argv[]) {
      * when calling exit() */
     atexit(i3_exit);
 
+    /* There might be children who died before we initialized the event loop,
+     * e.g., when restarting i3 (see #5756).
+     * To not carry zombie children around, raise the signal to invite libev to
+     * reap them.
+     *
+     * Note that there is no race condition between raising the signal below and
+     * entering the event loop later: the signal is just to notify libev that
+     * zombies might already be there. Actual reaping will take place in the
+     * event loop anyway. */
+    (void)raise(SIGCHLD);
+
     sd_notify(1, "READY=1");
     ev_loop(main_loop, 0);
+
+    /* Free these heap allocations just to satisfy LeakSanitizer. */
+    FREE(ipc_io);
+    FREE(socket_ipc_io);
+    FREE(log_io);
+    FREE(xcb_watcher);
 }

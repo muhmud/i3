@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * commands.c: all command functions (see commands_parser.c)
@@ -90,7 +90,7 @@ void cmd_nop(I3_CMD, const char *comment);
  * Implementation of 'append_layout <path>'.
  *
  */
-void cmd_append_layout(I3_CMD, const char *path);
+void cmd_append_layout(I3_CMD, const char *cpath);
 
 /**
  * Implementation of 'workspace next|prev|next_on_output|prev_on_output'.
@@ -102,7 +102,7 @@ void cmd_workspace(I3_CMD, const char *which);
  * Implementation of 'workspace [--no-auto-back-and-forth] number <number>'
  *
  */
-void cmd_workspace_number(I3_CMD, const char *which, const char *no_auto_back_and_forth);
+void cmd_workspace_number(I3_CMD, const char *which, const char *no_auto_back_and_forth_str);
 
 /**
  * Implementation of 'workspace back_and_forth'.
@@ -114,7 +114,7 @@ void cmd_workspace_back_and_forth(I3_CMD);
  * Implementation of 'workspace [--no-auto-back-and-forth] <name>'
  *
  */
-void cmd_workspace_name(I3_CMD, const char *name, const char *no_auto_back_and_forth);
+void cmd_workspace_name(I3_CMD, const char *name, const char *no_auto_back_and_forth_str);
 
 /**
  * Implementation of 'mark [--add|--replace] [--toggle] <mark>'
@@ -174,13 +174,13 @@ void cmd_exec(I3_CMD, const char *nosn, const char *command);
  * Implementation of 'focus left|right|up|down'.
  *
  */
-void cmd_focus_direction(I3_CMD, const char *direction);
+void cmd_focus_direction(I3_CMD, const char *direction_str);
 
 /**
  * Implementation of 'focus next|prev sibling'
  *
  */
-void cmd_focus_sibling(I3_CMD, const char *direction);
+void cmd_focus_sibling(I3_CMD, const char *direction_str);
 
 /**
  * Implementation of 'focus tiling|floating|mode_toggle'.
@@ -198,7 +198,7 @@ void cmd_focus_level(I3_CMD, const char *level);
  * Implementation of 'focus'.
  *
  */
-void cmd_focus(I3_CMD);
+void cmd_focus(I3_CMD, bool focus_workspace);
 
 /**
  * Implementation of 'fullscreen [enable|disable|toggle] [global]'.

@@ -16,7 +16,6 @@
 
 /* A datatype to pass through the callbacks to save the state */
 struct mode_json_params {
-    char *json;
     char *cur_key;
     char *name;
     bool pango_markup;
@@ -31,7 +30,7 @@ static int mode_string_cb(void *params_, const unsigned char *val, size_t len) {
     struct mode_json_params *params = (struct mode_json_params *)params_;
 
     if (!strcmp(params->cur_key, "change")) {
-        sasprintf(&(params->name), "%.*s", len, val);
+        sasprintf(&(params->name), "%.*s", (int)len, val);
         FREE(params->cur_key);
         return 1;
     }
@@ -68,7 +67,7 @@ static int mode_boolean_cb(void *params_, int val) {
 static int mode_map_key_cb(void *params_, const unsigned char *keyVal, size_t keyLen) {
     struct mode_json_params *params = (struct mode_json_params *)params_;
     FREE(params->cur_key);
-    sasprintf(&(params->cur_key), "%.*s", keyLen, keyVal);
+    sasprintf(&(params->cur_key), "%.*s", (int)keyLen, keyVal);
     return 1;
 }
 
@@ -96,26 +95,17 @@ static yajl_callbacks mode_callbacks = {
 };
 
 /*
- * Start parsing the received JSON string
+ * Parse the received JSON string
  *
  */
-void parse_mode_json(char *json) {
-    /* FIXME: Fasciliate stream processing, i.e. allow starting to interpret
-     * JSON in chunks */
+void parse_mode_json(const unsigned char *json, size_t size) {
     struct mode_json_params params;
-
     mode binding;
-
     params.cur_key = NULL;
-    params.json = json;
     params.mode = &binding;
 
-    yajl_handle handle;
-    yajl_status state;
-
-    handle = yajl_alloc(&mode_callbacks, NULL, (void *)&params);
-
-    state = yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_handle handle = yajl_alloc(&mode_callbacks, NULL, (void *)&params);
+    yajl_status state = yajl_parse(handle, json, size);
 
     /* FIXME: Proper error handling for JSON parsing */
     switch (state) {
@@ -129,8 +119,9 @@ void parse_mode_json(char *json) {
     }
 
     /* We don't want to indicate default binding mode */
-    if (strcmp("default", i3string_as_utf8(params.mode->name)) == 0)
+    if (strcmp("default", i3string_as_utf8(params.mode->name)) == 0) {
         I3STRING_FREE(params.mode->name);
+    }
 
     /* Set the new binding mode */
     set_current_mode(&binding);

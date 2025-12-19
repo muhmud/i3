@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * include/data.h: This file defines all data structures used by i3
@@ -80,10 +80,6 @@ typedef enum { ADJ_NONE = 0,
                ADJ_RIGHT_SCREEN_EDGE = (1 << 1),
                ADJ_UPPER_SCREEN_EDGE = (1 << 2),
                ADJ_LOWER_SCREEN_EDGE = (1 << 4) } adjacent_t;
-
-typedef enum { SMART_BORDERS_OFF,
-               SMART_BORDERS_ON,
-               SMART_BORDERS_NO_GAPS } smart_borders_t;
 
 typedef enum { SMART_GAPS_OFF,
                SMART_GAPS_ON,

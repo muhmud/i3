@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Tests focus_wrapping yes|no|force|workspace with cmp_tree
@@ -29,7 +29,6 @@ sub focus_wrapping {
     exit_gracefully($pid) if $pid > 0;
 
     my $config = <<"EOT";
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 fake-outputs 1024x768+0+0,1024x768+1024+0,1024x768+1024+768,1024x768+0+768

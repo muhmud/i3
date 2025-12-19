@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * This is LEGACY code (we support RandR, which can do much more than
@@ -36,15 +36,12 @@ static Output *get_screen_at(unsigned int x, unsigned int y) {
  *
  */
 static void query_screens(xcb_connection_t *conn) {
-    xcb_xinerama_query_screens_reply_t *reply;
-    xcb_xinerama_screen_info_t *screen_info;
-
-    reply = xcb_xinerama_query_screens_reply(conn, xcb_xinerama_query_screens_unchecked(conn), NULL);
+    xcb_xinerama_query_screens_reply_t *reply = xcb_xinerama_query_screens_reply(conn, xcb_xinerama_query_screens_unchecked(conn), NULL);
     if (!reply) {
         ELOG("Couldn't get Xinerama screens\n");
         return;
     }
-    screen_info = xcb_xinerama_query_screens_screen_info(reply);
+    const xcb_xinerama_screen_info_t *screen_info = xcb_xinerama_query_screens_screen_info(reply);
     int screens = xcb_xinerama_query_screens_screen_info_length(reply);
 
     for (int screen = 0; screen < screens; screen++) {
@@ -68,10 +65,11 @@ static void query_screens(xcb_connection_t *conn) {
             s->rect.width = screen_info[screen].width;
             s->rect.height = screen_info[screen].height;
             /* We always treat the screen at 0x0 as the primary screen */
-            if (s->rect.x == 0 && s->rect.y == 0)
+            if (s->rect.x == 0 && s->rect.y == 0) {
                 TAILQ_INSERT_HEAD(&outputs, s, outputs);
-            else
+            } else {
                 TAILQ_INSERT_TAIL(&outputs, s, outputs);
+            }
             output_init_con(s);
             init_ws_for_output(s);
             num_screens++;
@@ -113,14 +111,14 @@ void xinerama_init(void) {
         DLOG("Xinerama extension not found, using root output.\n");
         use_root_output(conn);
     } else {
-        xcb_xinerama_is_active_reply_t *reply;
-        reply = xcb_xinerama_is_active_reply(conn, xcb_xinerama_is_active(conn), NULL);
+        xcb_xinerama_is_active_reply_t *reply = xcb_xinerama_is_active_reply(conn, xcb_xinerama_is_active(conn), NULL);
 
         if (reply == NULL || !reply->state) {
             DLOG("Xinerama is not active (in your X-Server), using root output.\n");
             use_root_output(conn);
-        } else
+        } else {
             query_screens(conn);
+        }
 
         FREE(reply);
     }

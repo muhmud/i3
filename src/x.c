@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * x.c: Interface to X11, transfers our in-memory state to X11 (see also
@@ -41,6 +41,8 @@ typedef struct con_state {
     bool unmap_now;
     bool child_mapped;
     bool is_hidden;
+    bool is_maximized_vert;
+    bool is_maximized_horz;
 
     /* The con for which this state is. */
     Con *con;
@@ -177,7 +179,7 @@ void x_con_init(Con *con) {
                         (strlen("i3-frame") + 1) * 2,
                         "i3-frame\0i3-frame\0");
 
-    struct con_state *state = scalloc(1, sizeof(struct con_state));
+    con_state *state = scalloc(1, sizeof(struct con_state));
     state->id = con->frame.id;
     state->mapped = false;
     state->initial = true;
@@ -195,7 +197,7 @@ void x_con_init(Con *con) {
  *
  */
 void x_reinit(Con *con) {
-    struct con_state *state;
+    con_state *state;
 
     if ((state = state_for_frame(con->frame.id)) == NULL) {
         ELOG("window state not found\n");
@@ -215,7 +217,7 @@ void x_reinit(Con *con) {
  *
  */
 void x_reparent_child(Con *con, Con *old) {
-    struct con_state *state;
+    con_state *state;
     if ((state = state_for_frame(con->frame.id)) == NULL) {
         ELOG("window state for con not found\n");
         return;
@@ -230,7 +232,7 @@ void x_reparent_child(Con *con, Con *old) {
  *
  */
 void x_move_win(Con *src, Con *dest) {
-    struct con_state *state_src, *state_dest;
+    con_state *state_src, *state_dest;
 
     if ((state_src = state_for_frame(src->frame.id)) == NULL) {
         ELOG("window state for src not found\n");
@@ -252,8 +254,6 @@ void x_move_win(Con *src, Con *dest) {
 }
 
 static void _x_con_kill(Con *con) {
-    con_state *state;
-
     if (con->colormap != XCB_NONE) {
         xcb_free_colormap(conn, con->colormap);
     }
@@ -262,7 +262,7 @@ static void _x_con_kill(Con *con) {
     draw_util_surface_free(conn, &(con->frame_buffer));
     xcb_free_pixmap(conn, con->frame_buffer.id);
     con->frame_buffer.id = XCB_NONE;
-    state = state_for_frame(con->frame.id);
+    con_state *state = state_for_frame(con->frame.id);
     CIRCLEQ_REMOVE(&state_head, state, state);
     CIRCLEQ_REMOVE(&old_state_head, state, old_state);
     TAILQ_REMOVE(&initial_mapping_head, state, initial_mapping_order);
@@ -301,18 +301,20 @@ void x_con_reframe(Con *con) {
  *
  */
 bool window_supports_protocol(xcb_window_t window, xcb_atom_t atom) {
-    xcb_get_property_cookie_t cookie;
     xcb_icccm_get_wm_protocols_reply_t protocols;
     bool result = false;
 
-    cookie = xcb_icccm_get_wm_protocols(conn, window, A_WM_PROTOCOLS);
-    if (xcb_icccm_get_wm_protocols_reply(conn, cookie, &protocols, NULL) != 1)
+    xcb_get_property_cookie_t cookie = xcb_icccm_get_wm_protocols(conn, window, A_WM_PROTOCOLS);
+    if (xcb_icccm_get_wm_protocols_reply(conn, cookie, &protocols, NULL) != 1) {
         return false;
+    }
 
     /* Check if the client’s protocols have the requested atom set */
-    for (uint32_t i = 0; i < protocols.atoms_len; i++)
-        if (protocols.atoms[i] == atom)
+    for (uint32_t i = 0; i < protocols.atoms_len; i++) {
+        if (protocols.atoms[i] == atom) {
             result = true;
+        }
+    }
 
     xcb_icccm_get_wm_protocols_reply_wipe(&protocols);
 
@@ -471,18 +473,21 @@ void x_draw_decoration(Con *con) {
          parent->layout != L_TABBED) ||
         parent->type == CT_OUTPUT ||
         parent->type == CT_DOCKAREA ||
-        con->type == CT_FLOATING_CON)
+        con->type == CT_FLOATING_CON) {
         return;
+    }
 
     /* Skip containers whose height is 0 (for example empty dockareas) */
-    if (con->rect.height == 0)
+    if (con->rect.height == 0) {
         return;
+    }
 
     /* Skip containers whose pixmap has not yet been created (can happen when
      * decoration rendering happens recursively for a window for which
      * x_push_node() was not yet called) */
-    if (leaf && con->frame_buffer.id == XCB_NONE)
+    if (leaf && con->frame_buffer.id == XCB_NONE) {
         return;
+    }
 
     /* 1: build deco_params and compare with cache */
     struct deco_render_params *p = scalloc(1, sizeof(struct deco_render_params));
@@ -532,8 +537,9 @@ void x_draw_decoration(Con *con) {
     FREE(con->deco_render_params);
     con->deco_render_params = p;
 
-    if (con->window != NULL && con->window->name_x_changed)
+    if (con->window != NULL && con->window->name_x_changed) {
         con->window->name_x_changed = false;
+    }
 
     parent->pixmap_recreated = false;
     con->pixmap_recreated = false;
@@ -602,8 +608,9 @@ void x_draw_decoration(Con *con) {
 
     /* If the parent hasn't been set up yet, skip the decoration rendering
      * for now. */
-    if (dest_surface->id == XCB_NONE)
+    if (dest_surface->id == XCB_NONE) {
         goto copy_pixmaps;
+    }
 
     /* For the first child, we clear the parent pixmap to ensure there's no
      * garbage left on there. This is important to avoid tearing when using
@@ -614,8 +621,9 @@ void x_draw_decoration(Con *con) {
 
     /* if this is a borderless/1pixel window, we don’t need to render the
      * decoration. */
-    if (p->border_style != BS_NORMAL)
+    if (p->border_style != BS_NORMAL || con->deco_rect.width == 0 || con->deco_rect.height == 0) {
         goto copy_pixmaps;
+    }
 
     /* 4: paint the bar */
     DLOG("con->deco_rect = (x=%d, y=%d, w=%d, h=%d) for con->name=%s\n",
@@ -641,8 +649,9 @@ void x_draw_decoration(Con *con) {
 
         mark_t *mark;
         TAILQ_FOREACH (mark, &(con->marks_head), marks) {
-            if (mark->name[0] == '_')
+            if (mark->name[0] == '_') {
                 continue;
+            }
             had_visible_mark = true;
 
             char *buf;
@@ -731,6 +740,9 @@ void x_draw_decoration(Con *con) {
             /* Make sure the icon does not escape title boundaries */
             icon_offset_x = min(deco_width - icon_size - icon_padding - title_padding, title_offset_x + predict_text_width(title) + icon_padding);
             break;
+        default:
+            ELOG("BUG: invalid config.title_align value %d\n", config.title_align);
+            return;
     }
 
     draw_util_text(title, dest_surface,
@@ -764,12 +776,12 @@ copy_pixmaps:
  *
  */
 void x_deco_recurse(Con *con) {
-    Con *current;
     bool leaf = TAILQ_EMPTY(&(con->nodes_head)) &&
                 TAILQ_EMPTY(&(con->floating_head));
-    con_state *state = state_for_frame(con->frame.id);
+    const con_state *state = state_for_frame(con->frame.id);
 
     if (!leaf) {
+        Con *current;
         TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
             x_deco_recurse(current);
         }
@@ -784,8 +796,9 @@ void x_deco_recurse(Con *con) {
     }
 
     if ((con->type != CT_ROOT && con->type != CT_OUTPUT) &&
-        (!leaf || con->mapped))
+        (!leaf || con->mapped)) {
         x_draw_decoration(con);
+    }
 }
 
 /*
@@ -799,8 +812,9 @@ static void set_hidden_state(Con *con) {
 
     con_state *state = state_for_frame(con->frame.id);
     bool should_be_hidden = con_is_hidden(con);
-    if (should_be_hidden == state->is_hidden)
+    if (should_be_hidden == state->is_hidden) {
         return;
+    }
 
     if (should_be_hidden) {
         DLOG("setting _NET_WM_STATE_HIDDEN for con = %p\n", con);
@@ -811,6 +825,44 @@ static void set_hidden_state(Con *con) {
     }
 
     state->is_hidden = should_be_hidden;
+}
+
+/*
+ * Sets or removes _NET_WM_STATE_MAXIMIZE_{HORZ, VERT} on con
+ *
+ */
+static void set_maximized_state(Con *con) {
+    if (!con->window) {
+        return;
+    }
+
+    con_state *state = state_for_frame(con->frame.id);
+
+    const bool con_maximized_horz = con_is_maximized(con, HORIZ);
+    if (con_maximized_horz != state->is_maximized_horz) {
+        DLOG("setting _NET_WM_STATE_MAXIMIZED_HORZ for con %p(%s) to %d\n", con, con->name, con_maximized_horz);
+
+        if (con_maximized_horz) {
+            xcb_add_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_MAXIMIZED_HORZ);
+        } else {
+            xcb_remove_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_MAXIMIZED_HORZ);
+        }
+
+        state->is_maximized_horz = con_maximized_horz;
+    }
+
+    const bool con_maximized_vert = con_is_maximized(con, VERT);
+    if (con_maximized_vert != state->is_maximized_vert) {
+        DLOG("setting _NET_WM_STATE_MAXIMIZED_VERT for con %p(%s) to %d\n", con, con->name, con_maximized_vert);
+
+        if (con_maximized_vert) {
+            xcb_add_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_MAXIMIZED_VERT);
+        } else {
+            xcb_remove_property_atom(conn, con->window->id, A__NET_WM_STATE, A__NET_WM_STATE_MAXIMIZED_VERT);
+        }
+
+        state->is_maximized_vert = con_maximized_vert;
+    }
 }
 
 /*
@@ -851,7 +903,7 @@ static void set_shape_state(Con *con, bool need_reshape) {
         return;
     }
 
-    struct con_state *state;
+    con_state *state;
     if ((state = state_for_frame(con->frame.id)) == NULL) {
         ELOG("window state for con %p not found\n", con);
         return;
@@ -886,10 +938,9 @@ static void set_shape_state(Con *con, bool need_reshape) {
  */
 void x_push_node(Con *con) {
     Con *current;
-    con_state *state;
     Rect rect = con->rect;
 
-    state = state_for_frame(con->frame.id);
+    con_state *state = state_for_frame(con->frame.id);
 
     if (state->name != NULL) {
         DLOG("pushing name %s for con %p\n", state->name, con);
@@ -911,8 +962,9 @@ void x_push_node(Con *con) {
             }
         }
         rect.height = max_y + max_height;
-        if (rect.height == 0)
+        if (rect.height == 0) {
             con->mapped = false;
+        }
     } else if (con->window == NULL) {
         /* not a stacked or tabbed split container */
         con->mapped = false;
@@ -969,8 +1021,9 @@ void x_push_node(Con *con) {
     /* The root con and output cons will never require a pixmap. In particular for the
      * __i3 output, this will likely not work anyway because it might be ridiculously
      * large, causing an XCB_ALLOC error. */
-    if (con->type == CT_ROOT || con->type == CT_OUTPUT)
+    if (con->type == CT_ROOT || con->type == CT_OUTPUT) {
         is_pixmap_needed = false;
+    }
 
     bool fake_notify = false;
     /* Set new position if rect changed (and if height > 0) or if the pixmap
@@ -1001,8 +1054,9 @@ void x_push_node(Con *con) {
             }
 
             uint16_t win_depth = root_depth;
-            if (con->window)
+            if (con->window) {
                 win_depth = con->window->depth;
+            }
 
             /* Ensure we have valid dimensions for our surface. */
             /* TODO: This is probably a bug in the condition above as we should
@@ -1032,11 +1086,12 @@ void x_push_node(Con *con) {
              * TODO: Should this work the same way for L_TABBED? */
             if (!con->parent ||
                 con->parent->layout != L_STACKED ||
-                TAILQ_FIRST(&(con->parent->focus_head)) == con)
+                TAILQ_FIRST(&(con->parent->focus_head)) == con) {
                 /* Render the decoration now to make the correct decoration visible
                  * from the very first moment. Later calls will be cached, so this
                  * doesn’t hurt performance. */
                 x_deco_recurse(con);
+            }
         }
 
         DLOG("setting rect (%d, %d, %d, %d)\n", rect.x, rect.y, rect.width, rect.height);
@@ -1055,7 +1110,7 @@ void x_push_node(Con *con) {
         fake_notify = true;
     }
 
-    /* dito, but for child windows */
+    /* ditto, but for child windows */
     if (con->window != NULL &&
         !rect_equals(state->window_rect, con->window_rect)) {
         DLOG("setting window rect (%d, %d, %d, %d)\n",
@@ -1066,6 +1121,24 @@ void x_push_node(Con *con) {
     }
 
     set_shape_state(con, need_reshape);
+
+    /* Set _NET_FRAME_EXTENTS according to the actual decoration size. */
+    if (con != NULL && con->window != NULL) {
+        Rect bsr = con_border_style_rect(con);
+        Rect r = {
+            bsr.x,                 /* left */
+            0 - bsr.width - bsr.x, /* right */
+            bsr.y,                 /* top */
+            0 - bsr.height - bsr.y /* bottom */
+        };
+        xcb_change_property(
+            conn,
+            XCB_PROP_MODE_REPLACE,
+            con->window->id,
+            A__NET_FRAME_EXTENTS,
+            XCB_ATOM_CARDINAL, 32, 4,
+            &r);
+    }
 
     /* Map if map state changed, also ensure that the child window
      * is changed if we are mapped and there is a new, unmapped child window.
@@ -1118,6 +1191,7 @@ void x_push_node(Con *con) {
     }
 
     set_hidden_state(con);
+    set_maximized_state(con);
 
     /* Handle all children and floating windows of this node. We recurse
      * in focus order to display the focused client in a stack first when
@@ -1138,15 +1212,12 @@ void x_push_node(Con *con) {
  */
 static void x_push_node_unmaps(Con *con) {
     Con *current;
-    con_state *state;
-
-    state = state_for_frame(con->frame.id);
+    con_state *state = state_for_frame(con->frame.id);
 
     /* map/unmap if map state changed, also ensure that the child window
      * is changed if we are mapped *and* in initial state (meaning the
      * container was empty before, but now got a child) */
     if (state->unmap_now) {
-        xcb_void_cookie_t cookie;
         if (con->window != NULL) {
             /* Set WM_STATE_WITHDRAWN, it seems like Java apps need it */
             long data[] = {XCB_ICCCM_WM_STATE_WITHDRAWN, XCB_NONE};
@@ -1154,7 +1225,7 @@ static void x_push_node_unmaps(Con *con) {
                                 A_WM_STATE, A_WM_STATE, 32, 2, data);
         }
 
-        cookie = xcb_unmap_window(conn, con->frame.id);
+        const xcb_void_cookie_t cookie = xcb_unmap_window(conn, con->frame.id);
         DLOG("unmapping container %p / %s (serial %d)\n", con, con->name, cookie.sequence);
         /* we need to increase ignore_unmap for this container (if it
          * contains a window) and for every window "under" this one which
@@ -1182,13 +1253,15 @@ static void x_push_node_unmaps(Con *con) {
  * TODO: Remove once #1185 has been fixed
  */
 static bool is_con_attached(Con *con) {
-    if (con->parent == NULL)
+    if (con->parent == NULL) {
         return false;
+    }
 
     Con *current;
     TAILQ_FOREACH (current, &(con->parent->nodes_head), nodes) {
-        if (current == con)
+        if (current == con) {
             return true;
+        }
     }
 
     return false;
@@ -1220,8 +1293,9 @@ void x_push_changes(Con *con) {
      * them become ConfigureRequests that i3 handles. */
     uint32_t values[1] = {XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT};
     CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
-        if (state->mapped)
+        if (state->mapped) {
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
+        }
     }
     bool order_changed = false;
     bool stacking_changed = false;
@@ -1249,13 +1323,15 @@ void x_push_changes(Con *con) {
 
     /* X11 correctly represents the stack if we push it from bottom to top */
     CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
-        if (con_has_managed_window(state->con))
+        if (con_has_managed_window(state->con)) {
             memcpy(walk++, &(state->con->window->id), sizeof(xcb_window_t));
+        }
 
         con_state *prev = CIRCLEQ_PREV(state, state);
         con_state *old_prev = CIRCLEQ_PREV(state, old_state);
-        if (prev != old_prev)
+        if (prev != old_prev) {
             order_changed = true;
+        }
         if ((state->initial || order_changed) && prev != CIRCLEQ_END(&state_head)) {
             stacking_changed = true;
             uint32_t mask = 0;
@@ -1278,8 +1354,9 @@ void x_push_changes(Con *con) {
 
         /* reorder by initial mapping */
         TAILQ_FOREACH (state, &initial_mapping_head, initial_mapping_order) {
-            if (con_has_managed_window(state->con))
+            if (con_has_managed_window(state->con)) {
                 *walk++ = state->con->window->id;
+            }
         }
 
         ewmh_update_client_list(client_list_windows, client_list_count);
@@ -1312,15 +1389,17 @@ void x_push_changes(Con *con) {
 
     values[0] = FRAME_EVENT_MASK;
     CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
-        if (state->mapped)
+        if (state->mapped) {
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
+        }
     }
 
     x_deco_recurse(con);
 
     xcb_window_t to_focus = focused->frame.id;
-    if (focused->window != NULL)
+    if (focused->window != NULL) {
         to_focus = focused->window->id;
+    }
 
     if (focused_id != to_focus) {
         if (!focused->mapped) {
@@ -1337,8 +1416,9 @@ void x_push_changes(Con *con) {
 
                 change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
 
-                if (to_focus != last_focused && is_con_attached(focused))
+                if (to_focus != last_focused && is_con_attached(focused)) {
                     ipc_send_window_event("focus", focused);
+                }
             } else {
                 DLOG("Updating focus (focused: %p / %s) to X11 window 0x%08x\n", focused, focused->name, to_focus);
                 /* We remove XCB_EVENT_MASK_FOCUS_CHANGE from the event mask to get
@@ -1356,8 +1436,9 @@ void x_push_changes(Con *con) {
 
                 change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
 
-                if (to_focus != XCB_NONE && to_focus != last_focused && focused->window != NULL && is_con_attached(focused))
+                if (to_focus != XCB_NONE && to_focus != last_focused && focused->window != NULL && is_con_attached(focused)) {
                     ipc_send_window_event("focus", focused);
+                }
             }
 
             focused_id = last_focused = to_focus;
@@ -1387,8 +1468,9 @@ void x_push_changes(Con *con) {
      * EnterNotify event. */
     values[0] = FRAME_EVENT_MASK & ~XCB_EVENT_MASK_ENTER_WINDOW;
     CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
-        if (!state->unmap_now)
+        if (!state->unmap_now) {
             continue;
+        }
         xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
     }
 
@@ -1409,10 +1491,8 @@ void x_push_changes(Con *con) {
  * next call to x_push_changes() will make the change visible in X11.
  *
  */
-void x_raise_con(Con *con) {
-    con_state *state;
-    state = state_for_frame(con->frame.id);
-
+void x_raise_con(const Con *con) {
+    con_state *state = state_for_frame(con->frame.id);
     CIRCLEQ_REMOVE(&state_head, state, state);
     CIRCLEQ_INSERT_HEAD(&state_head, state, state);
 }
@@ -1424,8 +1504,7 @@ void x_raise_con(Con *con) {
  *
  */
 void x_set_name(Con *con, const char *name) {
-    struct con_state *state;
-
+    con_state *state;
     if ((state = state_for_frame(con->frame.id)) == NULL) {
         ELOG("window state not found\n");
         return;
@@ -1472,8 +1551,9 @@ void x_set_i3_atoms(void) {
  *
  */
 void x_set_warp_to(Rect *rect) {
-    if (config.mouse_warping != POINTER_WARPING_NONE)
+    if (config.mouse_warping != POINTER_WARPING_NONE) {
         warp_to = rect;
+    }
 }
 
 /*
@@ -1487,8 +1567,9 @@ void x_mask_event_mask(uint32_t mask) {
 
     con_state *state;
     CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
-        if (state->mapped)
+        if (state->mapped) {
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
+        }
     }
 }
 
@@ -1496,8 +1577,7 @@ void x_mask_event_mask(uint32_t mask) {
  * Enables or disables nonrectangular shape of the container frame.
  */
 void x_set_shape(Con *con, xcb_shape_sk_t kind, bool enable) {
-    struct con_state *state;
-    if ((state = state_for_frame(con->frame.id)) == NULL) {
+    if (state_for_frame(con->frame.id) == NULL) {
         ELOG("window state for con %p not found\n", con);
         return;
     }

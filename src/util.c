@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * util.c: Utility functions, which can be useful everywhere within i3 (see
@@ -21,42 +21,42 @@
 #include <sys/cdefs.h>
 #endif
 
-int min(int a, int b) {
+__attribute__((__const__)) int min(const int a, const int b) {
     return (a < b ? a : b);
 }
 
-int max(int a, int b) {
+__attribute__((__const__)) int max(const int a, const int b) {
     return (a > b ? a : b);
 }
 
-bool rect_contains(Rect rect, uint32_t x, uint32_t y) {
+__attribute__((__const__)) bool rect_contains(const Rect rect, const uint32_t x, const uint32_t y) {
     return (x >= rect.x &&
             x <= (rect.x + rect.width) &&
             y >= rect.y &&
             y <= (rect.y + rect.height));
 }
 
-Rect rect_add(Rect a, Rect b) {
+__attribute__((__const__)) Rect rect_add(const Rect a, const Rect b) {
     return (Rect){a.x + b.x,
                   a.y + b.y,
                   a.width + b.width,
                   a.height + b.height};
 }
 
-Rect rect_sub(Rect a, Rect b) {
+__attribute__((__const__)) Rect rect_sub(const Rect a, const Rect b) {
     return (Rect){a.x - b.x,
                   a.y - b.y,
                   a.width - b.width,
                   a.height - b.height};
 }
 
-Rect rect_sanitize_dimensions(Rect rect) {
+__attribute__((__const__)) Rect rect_sanitize_dimensions(Rect rect) {
     rect.width = (int32_t)rect.width <= 0 ? 1 : rect.width;
     rect.height = (int32_t)rect.height <= 0 ? 1 : rect.height;
     return rect;
 }
 
-bool rect_equals(Rect a, Rect b) {
+__attribute__((__const__)) bool rect_equals(const Rect a, const Rect b) {
     return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
 
@@ -66,9 +66,11 @@ bool rect_equals(Rect a, Rect b) {
  */
 __attribute__((pure)) bool name_is_digits(const char *name) {
     /* positive integers and zero are interpreted as numbers */
-    for (size_t i = 0; i < strlen(name); i++)
-        if (!isdigit(name[i]))
+    for (size_t i = 0; i < strlen(name); i++) {
+        if (!isdigit(name[i])) {
             return false;
+        }
+    }
 
     return true;
 }
@@ -83,17 +85,21 @@ bool layout_from_name(const char *layout_str, layout_t *out) {
     if (strcmp(layout_str, "default") == 0) {
         *out = L_DEFAULT;
         return true;
-    } else if (strcasecmp(layout_str, "stacked") == 0 ||
-               strcasecmp(layout_str, "stacking") == 0) {
+    }
+    if (strcasecmp(layout_str, "stacked") == 0 ||
+        strcasecmp(layout_str, "stacking") == 0) {
         *out = L_STACKED;
         return true;
-    } else if (strcasecmp(layout_str, "tabbed") == 0) {
+    }
+    if (strcasecmp(layout_str, "tabbed") == 0) {
         *out = L_TABBED;
         return true;
-    } else if (strcasecmp(layout_str, "splitv") == 0) {
+    }
+    if (strcasecmp(layout_str, "splitv") == 0) {
         *out = L_SPLITV;
         return true;
-    } else if (strcasecmp(layout_str, "splith") == 0) {
+    }
+    if (strcasecmp(layout_str, "splith") == 0) {
         *out = L_SPLITH;
         return true;
     }
@@ -145,19 +151,19 @@ bool update_if_necessary(uint32_t *destination, const uint32_t new_value) {
  *
  */
 void exec_i3_utility(char *name, char *argv[]) {
-    /* start the migration script, search PATH first */
-    char *migratepath = name;
-    argv[0] = migratepath;
-    execvp(migratepath, argv);
+    /* start the utility, search PATH first */
+    char *binary = name;
+    argv[0] = binary;
+    execvp(binary, argv);
 
-    /* if the script is not in path, maybe the user installed to a strange
+    /* if the utility is not in path, maybe the user installed to a strange
      * location and runs the i3 binary with an absolute path. We use
      * argv[0]’s dirname */
     char *pathbuf = sstrdup(start_argv[0]);
     char *dir = dirname(pathbuf);
-    sasprintf(&migratepath, "%s/%s", dir, name);
-    argv[0] = migratepath;
-    execvp(migratepath, argv);
+    sasprintf(&binary, "%s/%s", dir, name);
+    argv[0] = binary;
+    execvp(binary, argv);
 
 #if defined(__linux__)
     /* on linux, we have one more fall-back: dirname(/proc/self/exe) */
@@ -167,9 +173,9 @@ void exec_i3_utility(char *name, char *argv[]) {
         _exit(EXIT_FAILURE);
     }
     dir = dirname(buffer);
-    sasprintf(&migratepath, "%s/%s", dir, name);
-    argv[0] = migratepath;
-    execvp(migratepath, argv);
+    sasprintf(&binary, "%s/%s", dir, name);
+    argv[0] = binary;
+    execvp(binary, argv);
 #endif
 
     warn("Could not start %s", name);
@@ -182,8 +188,8 @@ void exec_i3_utility(char *name, char *argv[]) {
  */
 static char **add_argument(char **original, char *opt_char, char *opt_arg, char *opt_name) {
     int num_args;
-    for (num_args = 0; original[num_args] != NULL; num_args++)
-        ;
+    for (num_args = 0; original[num_args] != NULL; num_args++) {
+    }
     char **result = scalloc(num_args + 3, sizeof(char *));
 
     /* copy the arguments, but skip the ones we'll replace */
@@ -196,8 +202,9 @@ static char **add_argument(char **original, char *opt_char, char *opt_arg, char 
         }
         if (!strcmp(original[i], opt_char) ||
             (opt_name && !strcmp(original[i], opt_name))) {
-            if (opt_arg)
+            if (opt_arg) {
                 skip_next = true;
+            }
             continue;
         }
         result[write_index++] = original[i];
@@ -214,12 +221,12 @@ static char **add_argument(char **original, char *opt_char, char *opt_arg, char 
 #define ystr(str) yajl_gen_string(gen, (unsigned char *)str, strlen(str))
 
 static char *store_restart_layout(void) {
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
     yajl_gen gen = yajl_gen_alloc(NULL);
 
     dump_node(gen, croot, true);
 
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 
     const unsigned char *payload;
     size_t length;
@@ -230,8 +237,9 @@ static char *store_restart_layout(void) {
     char *filename;
     if (config.restart_state_path == NULL) {
         filename = get_process_filename("restart-state");
-        if (!filename)
+        if (!filename) {
             return NULL;
+        }
     } else {
         filename = resolve_tilde(config.restart_state_path);
     }
@@ -241,8 +249,9 @@ static char *store_restart_layout(void) {
     char *filenamecopy = sstrdup(filename);
     char *base = dirname(filenamecopy);
     DLOG("Creating \"%s\" for storing the restart layout\n", base);
-    if (mkdirp(base, DEFAULT_DIR_MODE) != 0)
+    if (mkdirp(base, DEFAULT_DIR_MODE) != 0) {
         ELOG("Could not create \"%s\" for storing the restart layout, layout will be lost.\n", base);
+    }
     free(filenamecopy);
 
     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
@@ -310,8 +319,9 @@ void i3_restart(bool forget_layout) {
  *
  */
 char *pango_escape_markup(char *input) {
-    if (!font_is_pango())
+    if (!font_is_pango()) {
         return input;
+    }
 
     char *escaped = g_markup_escape_text(input, -1);
     FREE(input);
@@ -364,8 +374,9 @@ void start_nagbar(pid_t *nagbar_pid, char *argv[]) {
     }
 
     /* child */
-    if (*nagbar_pid == 0)
+    if (*nagbar_pid == 0) {
         exec_i3_utility("i3-nagbar", argv);
+    }
 
     DLOG("Starting i3-nagbar with PID %d\n", *nagbar_pid);
 
@@ -385,14 +396,17 @@ void start_nagbar(pid_t *nagbar_pid, char *argv[]) {
  *
  */
 void kill_nagbar(pid_t nagbar_pid, bool wait_for_it) {
-    if (nagbar_pid == -1)
+    if (nagbar_pid == -1) {
         return;
+    }
 
-    if (kill(nagbar_pid, SIGTERM) == -1)
+    if (kill(nagbar_pid, SIGTERM) == -1) {
         warn("kill(configerror_nagbar) failed");
+    }
 
-    if (!wait_for_it)
+    if (!wait_for_it) {
         return;
+    }
 
     /* When restarting, we don’t enter the ev main loop anymore and after the
      * exec(), our old pid is no longer watched. So, ev won’t handle SIGCHLD

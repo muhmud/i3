@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * restore_layout.c: Everything for restored containers that is not pure state
@@ -37,13 +37,13 @@ static TAILQ_HEAD(state_head, placeholder_state) state_head =
 
 static xcb_connection_t *restore_conn;
 
-static struct ev_io *xcb_watcher;
-static struct ev_prepare *xcb_prepare;
+static ev_io *xcb_watcher;
+static ev_prepare *xcb_prepare;
 
 static void restore_handle_event(int type, xcb_generic_event_t *event);
 
 /* Documentation for these functions can be found in src/main.c, starting at xcb_got_event */
-static void restore_xcb_got_event(EV_P_ struct ev_io *w, int revents) {
+static void restore_xcb_got_event(EV_P_ ev_io *w, int revents) {
 }
 
 static void restore_xcb_prepare_cb(EV_P_ ev_prepare *w, int revents) {
@@ -89,9 +89,8 @@ void restore_connect(void) {
         ev_io_stop(main_loop, xcb_watcher);
         ev_prepare_stop(main_loop, xcb_prepare);
 
-        placeholder_state *state;
         while (!TAILQ_EMPTY(&state_head)) {
-            state = TAILQ_FIRST(&state_head);
+            placeholder_state *state = TAILQ_FIRST(&state_head);
             TAILQ_REMOVE(&state_head, state, state);
             free(state);
         }
@@ -117,8 +116,8 @@ void restore_connect(void) {
         errx(EXIT_FAILURE, "Cannot open display");
     }
 
-    xcb_watcher = scalloc(1, sizeof(struct ev_io));
-    xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
+    xcb_watcher = scalloc(1, sizeof(ev_io));
+    xcb_prepare = scalloc(1, sizeof(ev_prepare));
 
     ev_io_init(xcb_watcher, restore_xcb_got_event, xcb_get_file_descriptor(restore_conn), EV_READ);
     ev_io_start(main_loop, xcb_watcher);
@@ -144,7 +143,9 @@ static void update_placeholder_contents(placeholder_state *state) {
 #define APPEND_REGEX(re_name)                                                                                                                        \
     do {                                                                                                                                             \
         if (swallows->re_name != NULL) {                                                                                                             \
+            char *old_serialized = serialized;                                                                                                       \
             sasprintf(&serialized, "%s%s" #re_name "=\"%s\"", (serialized ? serialized : "["), (serialized ? " " : ""), swallows->re_name->pattern); \
+            free(old_serialized);                                                                                                                    \
         }                                                                                                                                            \
     } while (0)
 
@@ -159,7 +160,9 @@ static void update_placeholder_contents(placeholder_state *state) {
             continue;
         }
 
+        char *old_serialized = serialized;
         sasprintf(&serialized, "%s]", serialized);
+        free(old_serialized);
         DLOG("con %p (placeholder 0x%08x) line %d: %s\n", state->con, state->window, n, serialized);
 
         i3String *str = i3string_from_utf8(serialized);
@@ -208,9 +211,10 @@ static void open_placeholder_window(Con *con) {
         /* Set the same name as was stored in the layout file. While perhaps
          * slightly confusing in the first instant, this brings additional
          * clarity to which placeholder is waiting for which actual window. */
-        if (con->name != NULL)
+        if (con->name != NULL) {
             xcb_change_property(restore_conn, XCB_PROP_MODE_REPLACE, placeholder,
                                 A__NET_WM_NAME, A_UTF8_STRING, 8, strlen(con->name), con->name);
+        }
         DLOG("Created placeholder window 0x%08x for leaf container %p / %s\n",
              placeholder, con, con->name);
 
@@ -269,8 +273,9 @@ void restore_open_placeholder_windows(Con *parent) {
 bool restore_kill_placeholder(xcb_window_t placeholder) {
     placeholder_state *state;
     TAILQ_FOREACH (state, &state_head, state) {
-        if (state->window != placeholder)
+        if (state->window != placeholder) {
             continue;
+        }
 
         xcb_destroy_window(restore_conn, state->window);
         draw_util_surface_free(restore_conn, &(state->surface));
@@ -287,8 +292,9 @@ bool restore_kill_placeholder(xcb_window_t placeholder) {
 static void expose_event(xcb_expose_event_t *event) {
     placeholder_state *state;
     TAILQ_FOREACH (state, &state_head, state) {
-        if (state->window != event->window)
+        if (state->window != event->window) {
             continue;
+        }
 
         DLOG("refreshing window 0x%08x contents (con %p)\n", state->window, state->con);
 
@@ -309,8 +315,9 @@ static void expose_event(xcb_expose_event_t *event) {
 static void configure_notify(xcb_configure_notify_event_t *event) {
     placeholder_state *state;
     TAILQ_FOREACH (state, &state_head, state) {
-        if (state->window != event->window)
+        if (state->window != event->window) {
             continue;
+        }
 
         DLOG("ConfigureNotify: window 0x%08x has now width=%d, height=%d (con %p)\n",
              state->window, event->width, event->height, state->con);

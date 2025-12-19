@@ -18,10 +18,8 @@
 
 /* A datatype to pass through the callbacks to save the state */
 struct outputs_json_params {
-    struct outputs_head *outputs;
     i3_output *outputs_walk;
     char *cur_key;
-    char *json;
     bool in_rect;
 };
 
@@ -108,14 +106,15 @@ static int outputs_string_cb(void *params_, const unsigned char *val, size_t len
 
     if (!strcmp(params->cur_key, "current_workspace")) {
         char *copy = NULL;
-        sasprintf(&copy, "%.*s", len, val);
+        sasprintf(&copy, "%.*s", (int)len, val);
 
         char *end;
         errno = 0;
         long parsed_num = strtol(copy, &end, 10);
         if (errno == 0 &&
-            (end && *end == '\0'))
+            (end && *end == '\0')) {
             params->outputs_walk->ws = parsed_num;
+        }
 
         FREE(copy);
         FREE(params->cur_key);
@@ -126,7 +125,7 @@ static int outputs_string_cb(void *params_, const unsigned char *val, size_t len
         return 0;
     }
 
-    sasprintf(&(params->outputs_walk->name), "%.*s", len, val);
+    sasprintf(&(params->outputs_walk->name), "%.*s", (int)len, val);
 
     FREE(params->cur_key);
     return 1;
@@ -148,7 +147,6 @@ static int outputs_start_map_cb(void *params_) {
         new_output->visible = false;
         new_output->ws = 0,
         new_output->statusline_width = 0;
-        new_output->statusline_short_text = false;
         memset(&new_output->rect, 0, sizeof(rect));
         memset(&new_output->bar, 0, sizeof(surface_t));
         memset(&new_output->buffer, 0, sizeof(surface_t));
@@ -237,7 +235,7 @@ static int outputs_end_map_cb(void *params_) {
 static int outputs_map_key_cb(void *params_, const unsigned char *keyVal, size_t keyLen) {
     struct outputs_json_params *params = (struct outputs_json_params *)params_;
     FREE(params->cur_key);
-    sasprintf(&(params->cur_key), "%.*s", keyLen, keyVal);
+    sasprintf(&(params->cur_key), "%.*s", (int)keyLen, keyVal);
     return 1;
 }
 
@@ -263,21 +261,17 @@ void init_outputs(void) {
 }
 
 /*
- * Start parsing the received JSON string
+ * Parse the received JSON string
  *
  */
-void parse_outputs_json(char *json) {
+void parse_outputs_json(const unsigned char *json, size_t size) {
     struct outputs_json_params params;
     params.outputs_walk = NULL;
     params.cur_key = NULL;
-    params.json = json;
     params.in_rect = false;
 
-    yajl_handle handle;
-    yajl_status state;
-    handle = yajl_alloc(&outputs_callbacks, NULL, (void *)&params);
-
-    state = yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_handle handle = yajl_alloc(&outputs_callbacks, NULL, (void *)&params);
+    yajl_status state = yajl_parse(handle, json, size);
 
     /* FIXME: Proper errorhandling for JSON-parsing */
     switch (state) {
@@ -291,6 +285,7 @@ void parse_outputs_json(char *json) {
     }
 
     yajl_free(handle);
+    free(params.cur_key);
 }
 
 /*
@@ -319,12 +314,14 @@ void free_outputs(void) {
  *
  */
 i3_output *get_output_by_name(char *name) {
-    i3_output *walk;
     if (name == NULL) {
         return NULL;
     }
+    const bool is_primary = !strcasecmp(name, "primary");
+
+    i3_output *walk;
     SLIST_FOREACH (walk, outputs, slist) {
-        if (!strcmp(walk->name, name)) {
+        if ((is_primary && walk->primary) || !strcmp(walk->name, name)) {
             break;
         }
     }

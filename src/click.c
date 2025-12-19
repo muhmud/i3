@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * click.c: Button press (mouse click) events.
@@ -39,6 +39,9 @@ static bool tiling_resize_for_border(Con *con, border_t border, xcb_button_press
         case BORDER_BOTTOM:
             search_direction = D_DOWN;
             break;
+        default:
+            ELOG("BUG: invalid border value %d\n", border);
+            return false;
     }
 
     bool res = resize_find_tiling_participants(&first, &second, search_direction, false);
@@ -92,23 +95,27 @@ static bool floating_mod_on_tiled_client(Con *con, xcb_button_press_event_t *eve
 
     if (to_right < to_left &&
         to_right < to_top &&
-        to_right < to_bottom)
+        to_right < to_bottom) {
         return tiling_resize_for_border(con, BORDER_RIGHT, event, false);
+    }
 
     if (to_left < to_right &&
         to_left < to_top &&
-        to_left < to_bottom)
+        to_left < to_bottom) {
         return tiling_resize_for_border(con, BORDER_LEFT, event, false);
+    }
 
     if (to_top < to_right &&
         to_top < to_left &&
-        to_top < to_bottom)
+        to_top < to_bottom) {
         return tiling_resize_for_border(con, BORDER_TOP, event, false);
+    }
 
     if (to_bottom < to_right &&
         to_bottom < to_left &&
-        to_bottom < to_top)
+        to_bottom < to_top) {
         return tiling_resize_for_border(con, BORDER_BOTTOM, event, false);
+    }
 
     return false;
 }
@@ -125,18 +132,25 @@ static bool tiling_resize(Con *con, xcb_button_press_event_t *event, const click
     DLOG("checks for right >= %d\n", con->window_rect.x + con->window_rect.width);
     if (dest == CLICK_DECORATION) {
         return tiling_resize_for_border(con, BORDER_TOP, event, use_threshold);
+    } else if (dest == CLICK_BORDER) {
+        if (event->event_y >= 0 && event->event_y <= (int32_t)bsr.y &&
+            event->event_x >= (int32_t)bsr.x && event->event_x <= (int32_t)(con->rect.width + bsr.width)) {
+            return tiling_resize_for_border(con, BORDER_TOP, event, false);
+        }
+    }
+    if (event->event_x >= 0 && event->event_x <= (int32_t)bsr.x &&
+        event->event_y >= (int32_t)bsr.y && event->event_y <= (int32_t)(con->rect.height + bsr.height)) {
+        return tiling_resize_for_border(con, BORDER_LEFT, event, false);
     }
 
-    if (event->event_x >= 0 && event->event_x <= (int32_t)bsr.x &&
-        event->event_y >= (int32_t)bsr.y && event->event_y <= (int32_t)(con->rect.height + bsr.height))
-        return tiling_resize_for_border(con, BORDER_LEFT, event, false);
-
     if (event->event_x >= (int32_t)(con->window_rect.x + con->window_rect.width) &&
-        event->event_y >= (int32_t)bsr.y && event->event_y <= (int32_t)(con->rect.height + bsr.height))
+        event->event_y >= (int32_t)bsr.y && event->event_y <= (int32_t)(con->rect.height + bsr.height)) {
         return tiling_resize_for_border(con, BORDER_RIGHT, event, false);
+    }
 
-    if (event->event_y >= (int32_t)(con->window_rect.y + con->window_rect.height))
+    if (event->event_y >= (int32_t)(con->window_rect.y + con->window_rect.height)) {
         return tiling_resize_for_border(con, BORDER_BOTTOM, event, false);
+    }
 
     return false;
 }
@@ -152,7 +166,10 @@ static void allow_replay_pointer(xcb_timestamp_t time) {
  * functions for resizing/dragging.
  *
  */
-static void route_click(Con *con, xcb_button_press_event_t *event, const bool mod_pressed, const click_destination_t dest) {
+static void route_click(Con *con, xcb_button_press_event_t *event, const click_destination_t dest) {
+    const uint32_t mod = (config.floating_modifier & 0xFFFF);
+    const bool mod_pressed = (mod != 0 && (event->state & mod) == mod);
+
     DLOG("--> click properties: mod = %d, destination = %d\n", mod_pressed, dest);
     DLOG("--> OUTCOME = %p\n", con);
     DLOG("type = %d, name = %s\n", con->type, con->name);
@@ -215,6 +232,9 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const bool mo
     /* 1: see if the user scrolled on the decoration of a stacked/tabbed con */
     if (in_stacked && dest == CLICK_DECORATION && is_scroll) {
         DLOG("Scrolling on a window decoration\n");
+        /* Correctly move workspace focus first, see: #5472 */
+        workspace_show(ws);
+
         /* Use the focused child of the tabbed / stacked container, not the
          * container the user scrolled on. */
         Con *current = TAILQ_FIRST(&(con->parent->focus_head));
@@ -358,11 +378,8 @@ void handle_button_press(xcb_button_press_event_t *event) {
 
     last_timestamp = event->time;
 
-    const uint32_t mod = (config.floating_modifier & 0xFFFF);
-    const bool mod_pressed = (mod != 0 && (event->state & mod) == mod);
-    DLOG("floating_mod = %d, detail = %d\n", mod_pressed, event->detail);
     if ((con = con_by_window_id(event->event))) {
-        route_click(con, event, mod_pressed, CLICK_INSIDE);
+        route_click(con, event, CLICK_INSIDE);
         return;
     }
 
@@ -381,13 +398,14 @@ void handle_button_press(xcb_button_press_event_t *event) {
         /* If the root window is clicked, find the relevant output from the
          * click coordinates and focus the output's active workspace. */
         if (event->event == root && event->response_type == XCB_BUTTON_PRESS) {
-            Con *output, *ws;
+            Con *output;
             TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
                 if (con_is_internal(output) ||
-                    !rect_contains(output->rect, event->event_x, event->event_y))
+                    !rect_contains(output->rect, event->event_x, event->event_y)) {
                     continue;
+                }
 
-                ws = TAILQ_FIRST(&(output_get_content(output)->focus_head));
+                Con *ws = TAILQ_FIRST(&(output_get_content(output)->focus_head));
                 if (ws != con_get_workspace(focused)) {
                     workspace_show(ws);
                     tree_render();
@@ -406,25 +424,26 @@ void handle_button_press(xcb_button_press_event_t *event) {
     /* Check if the click was on the decoration of a child */
     if (con->window != NULL) {
         if (rect_contains(con->deco_rect, event->event_x, event->event_y)) {
-            route_click(con, event, mod_pressed, CLICK_DECORATION);
+            route_click(con, event, CLICK_DECORATION);
             return;
         }
     } else {
         Con *child;
         TAILQ_FOREACH_REVERSE (child, &(con->nodes_head), nodes_head, nodes) {
-            if (!rect_contains(child->deco_rect, event->event_x, event->event_y))
+            if (!rect_contains(child->deco_rect, event->event_x, event->event_y)) {
                 continue;
+            }
 
-            route_click(child, event, mod_pressed, CLICK_DECORATION);
+            route_click(child, event, CLICK_DECORATION);
             return;
         }
     }
 
     if (event->child != XCB_NONE) {
         DLOG("event->child not XCB_NONE, so this is an event which originated from a click into the application, but the application did not handle it.\n");
-        route_click(con, event, mod_pressed, CLICK_INSIDE);
+        route_click(con, event, CLICK_INSIDE);
         return;
     }
 
-    route_click(con, event, mod_pressed, CLICK_BORDER);
+    route_click(con, event, CLICK_BORDER);
 }

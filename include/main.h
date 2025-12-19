@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * main.c: Initialization, main loop
@@ -10,6 +10,9 @@
 #pragma once
 
 #include <config.h>
+#include <locale.h>
+
+extern locale_t numericC;
 
 /**
  * Enable or disable the main X11 event handling function.

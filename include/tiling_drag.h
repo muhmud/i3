@@ -1,15 +1,13 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * tiling_drag.h: Reposition tiled windows by dragging.
  *
  */
 #pragma once
-
-#include "all.h"
 
 /**
  * Tiling drag initiation modes.

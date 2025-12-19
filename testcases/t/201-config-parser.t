@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Tests the standalone parser binary to see if it calls the right code when
@@ -202,12 +202,14 @@ $config = <<'EOT';
 popup_during_fullscreen ignore
 popup_during_fullscreen leave_fullscreen
 popup_during_fullscreen SMArt
+popup_during_fullscreen aLL
 EOT
 
 $expected = <<'EOT';
 cfg_popup_during_fullscreen(ignore)
 cfg_popup_during_fullscreen(leave_fullscreen)
 cfg_popup_during_fullscreen(smart)
+cfg_popup_during_fullscreen(all)
 EOT
 
 is(parser_calls($config),
@@ -604,9 +606,7 @@ $config = <<'EOT';
 # "foo" client.focused          #4c7899 #285577 #ffffff #2e9ef4
 EOT
 
-$expected = <<'EOT';
-
-EOT
+$expected = "\n";
 
 is(parser_calls($config),
    $expected,
@@ -617,8 +617,6 @@ is(parser_calls($config),
 ################################################################################
 
 $config = <<'EOT';
-# i3 config file (v4)
-
 font foobar
 
 unknown qux
@@ -633,12 +631,12 @@ EOT
 
 my $expected_tail = <<'EOT';
 ERROR: CONFIG: (in file <stdin>)
-ERROR: CONFIG: Line   3: font foobar
-ERROR: CONFIG: Line   4: 
-ERROR: CONFIG: Line   5: unknown qux
+ERROR: CONFIG: Line   1: font foobar
+ERROR: CONFIG: Line   2: 
+ERROR: CONFIG: Line   3: unknown qux
 ERROR: CONFIG:           ^^^^^^^^^^^
-ERROR: CONFIG: Line   6: 
-ERROR: CONFIG: Line   7: # yay
+ERROR: CONFIG: Line   4: 
+ERROR: CONFIG: Line   5: # yay
 EOT
 
 $expected = $expected_head . $expected_all_tokens . $expected_tail;
@@ -776,7 +774,7 @@ EOT
 $expected = <<'EOT';
 cfg_bar_start()
 cfg_bar_output(LVDS-1)
-ERROR: CONFIG: Expected one of these tokens: <end>, '#', 'set', 'i3bar_command', 'status_command', 'socket_path', 'mode', 'hidden_state', 'id', 'modifier', 'wheel_up_cmd', 'wheel_down_cmd', 'bindsym', 'position', 'output', 'tray_output', 'tray_padding', 'font', 'separator_symbol', 'binding_mode_indicator', 'workspace_buttons', 'workspace_min_width', 'strip_workspace_numbers', 'strip_workspace_name', 'verbose', 'height', 'padding', 'colors', '}'
+ERROR: CONFIG: Expected one of these tokens: <end>, '#', 'set', 'i3bar_command', 'status_command', 'workspace_command', 'socket_path', 'mode', 'hidden_state', 'id', 'modifier', 'wheel_up_cmd', 'wheel_down_cmd', 'bindsym', 'position', 'output', 'tray_output', 'tray_padding', 'font', 'separator_symbol', 'binding_mode_indicator', 'workspace_buttons', 'workspace_min_width', 'strip_workspace_numbers', 'strip_workspace_name', 'verbose', 'height', 'padding', 'colors', '}'
 ERROR: CONFIG: (in file <stdin>)
 ERROR: CONFIG: Line   1: bar {
 ERROR: CONFIG: Line   2:     output LVDS-1

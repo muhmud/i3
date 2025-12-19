@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Verifies the _NET_WORKAREA hint is deleted in case it is already set on the
@@ -57,7 +57,6 @@ sub is_net_workarea_set {
 ok(is_net_workarea_set(), '_NET_WORKAREA is set before starting i3');
 
 my $config = <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 fake-outputs 1024x768+0+0
 EOT

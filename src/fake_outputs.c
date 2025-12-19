@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * Faking outputs is useful in pathological situations (like network X servers
@@ -46,8 +46,9 @@ void fake_outputs_init(const char *output_spec) {
             primary = true;
             walk++;
         }
-        if (*walk == ',')
+        if (*walk == ',') {
             walk++; /* Skip delimiter */
+        }
         DLOG("Parsed output as width = %u, height = %u at (%u, %u)%s\n",
              width, height, x, y, primary ? " (primary)" : "");
 
@@ -71,10 +72,11 @@ void fake_outputs_init(const char *output_spec) {
             new_output->rect.width = width;
             new_output->rect.height = height;
             /* We always treat the screen at 0x0 as the primary screen */
-            if (new_output->rect.x == 0 && new_output->rect.y == 0)
+            if (new_output->rect.x == 0 && new_output->rect.y == 0) {
                 TAILQ_INSERT_HEAD(&outputs, new_output, outputs);
-            else
+            } else {
                 TAILQ_INSERT_TAIL(&outputs, new_output, outputs);
+            }
             output_init_con(new_output);
             init_ws_for_output(new_output);
             num_screens++;

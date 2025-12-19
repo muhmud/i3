@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * inject_randr1.5.c: An X11 proxy which interprets RandR 1.5 GetMonitors
@@ -54,7 +54,7 @@ static struct injected_reply getmonitors_reply = {NULL, 0};
 static struct injected_reply getoutputinfo_reply = {NULL, 0};
 /* END RandR 1.5 specific */
 
-#define XCB_PAD(i) (-(i)&3)
+#define XCB_PAD(i) (-(i) & 3)
 
 struct connstate {
     /* clientw is a libev watcher for the connection which we accept()ed. */

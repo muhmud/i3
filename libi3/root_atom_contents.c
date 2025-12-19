@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  */
@@ -86,7 +86,8 @@ out:
 out_atom:
     free(atom_reply);
 out_conn:
-    if (provided_conn == NULL)
+    if (provided_conn == NULL) {
         xcb_disconnect(conn);
+    }
     return content;
 }

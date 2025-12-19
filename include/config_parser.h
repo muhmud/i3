@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * config_parser.h: config parser-related definitions
@@ -13,29 +13,13 @@
 
 #include <yajl/yajl_gen.h>
 
+#include "parser_util.h"
+
 SLIST_HEAD(variables_head, Variable);
 extern pid_t config_error_nagbar_pid;
 
-struct stack_entry {
-    /* Just a pointer, not dynamically allocated. */
-    const char *identifier;
-    enum {
-        STACK_STR = 0,
-        STACK_LONG = 1,
-    } type;
-    union {
-        char *str;
-        long num;
-    } val;
-};
-
-struct stack {
-    struct stack_entry stack[10];
-};
-
 struct parser_ctx {
     bool use_nagbar;
-    bool assume_v4;
 
     int state;
     Match current_match;

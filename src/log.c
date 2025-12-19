@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * log.c: Logging functions.
@@ -94,9 +94,9 @@ static void store_log_markers(void) {
  */
 void init_logging(void) {
     if (!errorfilename) {
-        if (!(errorfilename = get_process_filename("errorlog")))
+        if (!(errorfilename = get_process_filename("errorlog"))) {
             fprintf(stderr, "Could not initialize errorlog\n");
-        else {
+        } else {
             errorfile = fopen(errorfilename, "w");
             if (!errorfile) {
                 fprintf(stderr, "Could not initialize errorlog on %s: %s\n",
@@ -121,10 +121,11 @@ void init_logging(void) {
     /* Start SHM logging if shmlog_size is > 0. shmlog_size is SHMLOG_SIZE by
      * default on development versions, and 0 on release versions. If it is
      * not > 0, the user has turned it off, so let's close the logbuffer. */
-    if (shmlog_size > 0 && logbuffer == NULL)
+    if (shmlog_size > 0 && logbuffer == NULL) {
         open_logbuffer();
-    else if (shmlog_size <= 0 && logbuffer)
+    } else if (shmlog_size <= 0 && logbuffer) {
         close_logbuffer();
+    }
     atexit(purge_zerobyte_logfile);
 }
 
@@ -228,7 +229,7 @@ void set_debug_logging(const bool _debug_logging) {
  * This is to be called by *LOG() which includes filename/linenumber/function.
  *
  */
-static void vlog(const bool print, const char *fmt, va_list args) {
+__attribute__((format(printf, 2, 0))) static void vlog(const bool print, const char *fmt, va_list args) {
     /* Precisely one page to not consume too much memory but to hold enough
      * data to be useful. */
     static char message[4096];
@@ -292,8 +293,9 @@ static void vlog(const bool print, const char *fmt, va_list args) {
 
         store_log_markers();
 
-        if (print)
+        if (print) {
             fwrite(message, len, 1, stdout);
+        }
 
         log_broadcast_to_clients(message, len);
     }
@@ -307,8 +309,9 @@ static void vlog(const bool print, const char *fmt, va_list args) {
 void verboselog(char *fmt, ...) {
     va_list args;
 
-    if (!logbuffer && !verbose)
+    if (!logbuffer && !verbose) {
         return;
+    }
 
     va_start(args, fmt);
     vlog(verbose, fmt, args);
@@ -327,6 +330,9 @@ void errorlog(char *fmt, ...) {
     va_end(args);
 
     /* also log to the error logfile, if opened */
+    if (!errorfile) {
+        return;
+    }
     va_start(args, fmt);
     vfprintf(errorfile, fmt, args);
     fflush(errorfile);
@@ -342,8 +348,9 @@ void errorlog(char *fmt, ...) {
 void debuglog(char *fmt, ...) {
     va_list args;
 
-    if (!logbuffer && !(debug_logging))
+    if (!logbuffer && !(debug_logging)) {
         return;
+    }
 
     va_start(args, fmt);
     vlog(debug_logging, fmt, args);
@@ -359,15 +366,18 @@ void purge_zerobyte_logfile(void) {
     struct stat st;
     char *slash;
 
-    if (!errorfilename)
+    if (!errorfilename) {
         return;
+    }
 
     /* don't delete the log file if it contains something */
-    if ((stat(errorfilename, &st)) == -1 || st.st_size > 0)
+    if ((stat(errorfilename, &st)) == -1 || st.st_size > 0) {
         return;
+    }
 
-    if (unlink(errorfilename) == -1)
+    if (unlink(errorfilename) == -1) {
         return;
+    }
 
     if ((slash = strrchr(errorfilename, '/')) != NULL) {
         *slash = '\0';
@@ -386,7 +396,7 @@ char *current_log_stream_socket_path = NULL;
  * the list of log clients.
  *
  */
-void log_new_client(EV_P_ struct ev_io *w, int revents) {
+void log_new_client(EV_P_ ev_io *w, int revents) {
     struct sockaddr_un peer;
     socklen_t len = sizeof(struct sockaddr_un);
     int fd;

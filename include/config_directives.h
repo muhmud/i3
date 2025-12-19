@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * config_directives.h: all config storing functions (see config_parser.c)
@@ -17,7 +17,7 @@
  * A utility function to convert a string containing the group and modifiers to
  * the corresponding bit mask.
  */
-i3_event_state_mask_t event_state_from_str(const char *str);
+i3_event_state_mask_t event_state_from_str(const char *str) __attribute__((__pure__));
 
 /** The beginning of the prototype for every cfg_ function. */
 #define I3_CFG Match *current_match, struct ConfigResultIR *result
@@ -43,7 +43,7 @@ CFGFUN(include, const char *pattern);
 CFGFUN(font, const char *font);
 CFGFUN(exec, const char *exectype, const char *no_startup_id, const char *command);
 CFGFUN(for_window, const char *command);
-CFGFUN(gaps, const char *workspace, const char *type, const long value);
+CFGFUN(gaps, const char *workspace, const char *scope, const long value);
 CFGFUN(smart_borders, const char *enable);
 CFGFUN(smart_gaps, const char *enable);
 CFGFUN(floating_minimum_size, const long width, const long height);
@@ -69,6 +69,7 @@ CFGFUN(no_focus);
 CFGFUN(ipc_socket, const char *path);
 CFGFUN(ipc_kill_timeout, const long timeout_ms);
 CFGFUN(tiling_drag, const char *value);
+CFGFUN(tiling_drag_swap_modifier, const char *modifiers);
 CFGFUN(restart_state, const char *path);
 CFGFUN(popup_during_fullscreen, const char *value);
 CFGFUN(color, const char *colorclass, const char *border, const char *background, const char *text, const char *indicator, const char *child_border);
@@ -78,7 +79,7 @@ CFGFUN(default_border, const char *windowtype, const char *border, const long wi
 CFGFUN(workspace, const char *workspace, const char *output);
 CFGFUN(binding, const char *bindtype, const char *modifiers, const char *key, const char *release, const char *border, const char *whole_window, const char *exclude_titlebar, const char *command);
 
-CFGFUN(enter_mode, const char *pango_markup, const char *mode);
+CFGFUN(enter_mode, const char *pango_markup, const char *modename);
 CFGFUN(mode_binding, const char *bindtype, const char *modifiers, const char *key, const char *release, const char *border, const char *whole_window, const char *exclude_titlebar, const char *command);
 
 CFGFUN(bar_font, const char *font);
@@ -102,9 +103,10 @@ CFGFUN(bar_i3bar_command, const char *i3bar_command);
 CFGFUN(bar_color, const char *colorclass, const char *border, const char *background, const char *text);
 CFGFUN(bar_socket_path, const char *socket_path);
 CFGFUN(bar_tray_output, const char *output);
-CFGFUN(bar_tray_padding, const long spacing_px);
+CFGFUN(bar_tray_padding, const long padding_px);
 CFGFUN(bar_color_single, const char *colorclass, const char *color);
 CFGFUN(bar_status_command, const char *command);
+CFGFUN(bar_workspace_command, const char *command);
 CFGFUN(bar_binding_mode_indicator, const char *value);
 CFGFUN(bar_workspace_buttons, const char *value);
 CFGFUN(bar_workspace_min_width, const long width);

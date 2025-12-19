@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  */
@@ -50,17 +50,18 @@ uint32_t get_colorpixel(const char *hex) {
 
     /* Shortcut: if our screen is true color, no need to do a roundtrip to X11 */
     if (root_screen == NULL || root_screen->root_depth == 24 || root_screen->root_depth == 32) {
-        return (a << 24) | (r << 16 | g << 8 | b);
+        return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
     }
 
     /* Lookup this colorpixel in the cache */
     struct Colorpixel *colorpixel;
     SLIST_FOREACH (colorpixel, &(colorpixels), colorpixels) {
-        if (strcmp(colorpixel->hex, hex) == 0)
+        if (strcmp(colorpixel->hex, hex) == 0) {
             return colorpixel->pixel;
+        }
     }
 
-#define RGB_8_TO_16(i) (65535 * ((i)&0xFF) / 255)
+#define RGB_8_TO_16(i) (65535 * ((i) & 0xFF) / 255)
     int r16 = RGB_8_TO_16(r);
     int g16 = RGB_8_TO_16(g);
     int b16 = RGB_8_TO_16(b);

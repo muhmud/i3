@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * regex.c: Interface to libPCRE (perl compatible regular expressions).
@@ -32,8 +32,8 @@ struct regex *regex_new(const char *pattern) {
     if (!(re->regex = pcre2_compile((PCRE2_SPTR)pattern, PCRE2_ZERO_TERMINATED, options, &errorcode, &offset, NULL))) {
         PCRE2_UCHAR buffer[256];
         pcre2_get_error_message(errorcode, buffer, sizeof(buffer));
-        ELOG("PCRE regular expression compilation failed at %lu: %s\n",
-             offset, buffer);
+        ELOG("PCRE regular expression compilation failed at %zu: %s\n",
+             (size_t)offset, buffer);
         regex_free(re);
         return NULL;
     }
@@ -45,8 +45,9 @@ struct regex *regex_new(const char *pattern) {
  *
  */
 void regex_free(struct regex *regex) {
-    if (!regex)
+    if (!regex) {
         return;
+    }
     FREE(regex->pattern);
     FREE(regex->regex);
     FREE(regex);
@@ -58,15 +59,12 @@ void regex_free(struct regex *regex) {
  * be visible without debug logging.
  *
  */
-bool regex_matches(struct regex *regex, const char *input) {
-    pcre2_match_data *match_data;
-    int rc;
-
-    match_data = pcre2_match_data_create_from_pattern(regex->regex, NULL);
+bool regex_matches(const struct regex *regex, const char *input) {
+    pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(regex->regex, NULL);
 
     /* We use strlen() because pcre_exec() expects the length of the input
      * string in bytes */
-    rc = pcre2_match(regex->regex, (PCRE2_SPTR)input, strlen(input), 0, 0, match_data, NULL);
+    const int rc = pcre2_match(regex->regex, (PCRE2_SPTR)input, strlen(input), 0, 0, match_data, NULL);
     pcre2_match_data_free(match_data);
     if (rc > 0) {
         LOG("Regular expression \"%s\" matches \"%s\"\n",

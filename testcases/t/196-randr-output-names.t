@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Verify that i3 allows strange RandR output names such as DVI-I_1/digital.
@@ -22,7 +22,6 @@ use File::Temp qw(tempfile);
 
 my ($fh, $filename) = tempfile(UNLINK => 1);
 print $fh <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 workspace 2 output DVI-I_1/digital

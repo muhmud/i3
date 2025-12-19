@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Ensures that calling i3 with the -C switch works (smoke test).
@@ -21,7 +21,6 @@ use POSIX ":sys_wait_h";
 use Time::HiRes qw(sleep);
 
 my $config = <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 invalid

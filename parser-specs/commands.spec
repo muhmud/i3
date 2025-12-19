@@ -1,6 +1,6 @@
 # vim:ts=2:sw=2:expandtab
 #
-# i3 - an improved dynamic tiling window manager
+# i3 - an improved tiling window manager
 # © 2009 Michael Stapelberg and contributors (see also: LICENSE)
 #
 # parser-specs/commands.spec: Specification file for generate-command-parser.pl
@@ -186,6 +186,7 @@ state WORKSPACE_NUMBER:
 # focus output <output>
 # focus tiling|floating|mode_toggle
 # focus parent|child
+# focus workspace
 # focus
 state FOCUS:
   direction = 'left', 'right', 'up', 'down'
@@ -198,8 +199,10 @@ state FOCUS:
       -> call cmd_focus_window_mode($window_mode)
   level = 'parent', 'child'
       -> call cmd_focus_level($level)
+  workspace = 'workspace'
+      -> call cmd_focus(1)
   end
-      -> call cmd_focus()
+      -> call cmd_focus(0)
 
 state FOCUS_AUTO:
   'sibling'

@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Test if new containers get focused when there is a fullscreen container at
@@ -19,7 +19,6 @@
 # in other workspaces work even when there is a fullscreen container.
 #
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 fake-outputs 1024x768+0+0,1024x768+1024+0

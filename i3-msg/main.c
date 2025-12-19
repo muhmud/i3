@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * i3-msg/main.c: Utility which sends messages to a running i3-instance using
@@ -61,22 +61,24 @@ static int exit_code = 0;
 static reply_t last_reply;
 
 static int reply_boolean_cb(void *params, int val) {
-    if (strcmp(last_key, "success") == 0)
+    if (strcmp(last_key, "success") == 0) {
         last_reply.success = val;
+    }
     return 1;
 }
 
 static int reply_string_cb(void *params, const unsigned char *val, size_t len) {
     char *str = sstrndup((const char *)val, len);
 
-    if (strcmp(last_key, "error") == 0)
+    if (strcmp(last_key, "error") == 0) {
         last_reply.error = str;
-    else if (strcmp(last_key, "input") == 0)
+    } else if (strcmp(last_key, "input") == 0) {
         last_reply.input = str;
-    else if (strcmp(last_key, "errorposition") == 0)
+    } else if (strcmp(last_key, "errorposition") == 0) {
         last_reply.errorposition = str;
-    else
+    } else {
         free(str);
+    }
     return 1;
 }
 
@@ -146,10 +148,6 @@ static yajl_callbacks config_callbacks = {
 };
 
 int main(int argc, char *argv[]) {
-#if defined(__OpenBSD__)
-    if (pledge("stdio rpath unix", NULL) == -1)
-        err(EXIT_FAILURE, "pledge");
-#endif
     char *socket_path = NULL;
     int o, option_index = 0;
     uint32_t message_type = I3_IPC_MESSAGE_TYPE_RUN_COMMAND;
@@ -244,12 +242,14 @@ int main(int argc, char *argv[]) {
         optind++;
     }
 
-    if (!payload)
+    if (!payload) {
         payload = sstrdup("");
+    }
 
     int sockfd = ipc_connect(socket_path);
-    if (ipc_send_message(sockfd, strlen(payload), message_type, (uint8_t *)payload) == -1)
+    if (ipc_send_message(sockfd, strlen(payload), message_type, (uint8_t *)payload) == -1) {
         err(EXIT_FAILURE, "IPC: write()");
+    }
     free(payload);
 
     uint32_t reply_length;
@@ -257,12 +257,14 @@ int main(int argc, char *argv[]) {
     uint8_t *reply;
     int ret;
     if ((ret = ipc_recv_message(sockfd, &reply_type, &reply_length, &reply)) != 0) {
-        if (ret == -1)
+        if (ret == -1) {
             err(EXIT_FAILURE, "IPC: read()");
+        }
         exit(1);
     }
-    if (reply_type != message_type)
+    if (reply_type != message_type) {
         errx(EXIT_FAILURE, "IPC: Received reply of type %d but expected %d", reply_type, message_type);
+    }
     /* For the reply of commands, have a look if that command was successful.
      * If not, nicely format the error message. */
     if (reply_type == I3_IPC_REPLY_TYPE_COMMAND) {
@@ -303,8 +305,9 @@ int main(int argc, char *argv[]) {
         do {
             free(reply);
             if ((ret = ipc_recv_message(sockfd, &reply_type, &reply_length, &reply)) != 0) {
-                if (ret == -1)
+                if (ret == -1) {
                     err(EXIT_FAILURE, "IPC: read()");
+                }
                 exit(1);
             }
 

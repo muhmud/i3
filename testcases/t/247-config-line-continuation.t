@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Checks that the line continuation are parsed correctly
@@ -44,7 +44,6 @@ sub launch_get_border {
 #####################################################################
 
 my $config = <<'EOT';
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 set $vartest \"special title\"
@@ -58,7 +57,6 @@ is(launch_get_border($config), 'none', 'no border');
 #####################################################################
 
 $config = <<'EOT';
-# i3 config file (v4)
 font \
 -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
@@ -185,7 +183,6 @@ is(launch_get_border($config), 'none', 'no border');
 #####################################################################
 
 $config = <<'EOT';
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 set \
@@ -203,7 +200,6 @@ is(launch_get_border($config), 'none', 'no border');
 #####################################################################
 
 $config = <<'EOT';
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 set $vartest \"special title\"

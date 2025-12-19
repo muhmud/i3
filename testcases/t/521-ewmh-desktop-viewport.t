@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Test that the EWMH specified property _NET_DESKTOP_VIEWPORT is updated
@@ -19,7 +19,6 @@
 # pairs for the upper left corner of the respective outputs of the workspaces
 # Ticket: #1241
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 workspace 0 output fake-0

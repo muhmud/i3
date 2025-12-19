@@ -11,7 +11,7 @@
 # • http://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Tests that focus does not wrap when focus_wrapping is disabled in
@@ -19,7 +19,6 @@
 # Ticket: #2352
 # Bug still in: 4.14-72-g6411130c
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 focus_wrapping no

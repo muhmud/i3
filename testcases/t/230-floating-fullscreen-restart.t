@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Ensures floating windows don’t drop out of fullscreen mode when restarting
@@ -19,7 +19,6 @@
 # Ticket: #1263
 # Bug still in: 4.7.2-200-g570b572
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 for_window [instance=__i3-test-window] floating enable, border pixel 1

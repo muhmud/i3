@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  */
@@ -83,8 +83,9 @@ char *get_exe_path(const char *argv0) {
     const char *component;
     char *str = path;
     while (1) {
-        if ((component = strtok(str, ":")) == NULL)
+        if ((component = strtok(str, ":")) == NULL) {
             break;
+        }
         str = NULL;
         free(destpath);
         sasprintf(&destpath, "%s/%s", component, argv0);

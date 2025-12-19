@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * drag.c: click and drag.
@@ -103,8 +103,9 @@ static bool drain_drag_events(EV_P, struct drag_x11_cb *dragloop) {
                 break;
         }
 
-        if (last_motion_notify != (xcb_motion_notify_event_t *)event)
+        if (last_motion_notify != (xcb_motion_notify_event_t *)event) {
             free(event);
+        }
 
         if (dragloop->result != DRAGGING) {
             ev_break(EV_A_ EVBREAK_ONE);
@@ -154,7 +155,7 @@ static bool drain_drag_events(EV_P, struct drag_x11_cb *dragloop) {
 }
 
 static void xcb_drag_prepare_cb(EV_P_ ev_prepare *w, int revents) {
-    struct drag_x11_cb *dragloop = (struct drag_x11_cb *)w->data;
+    struct drag_x11_cb *dragloop = w->data;
     while (!drain_drag_events(EV_A, dragloop)) {
         /* repeatedly drain events: draining might produce additional ones */
     }
@@ -176,22 +177,21 @@ drag_result_t drag_pointer(Con *con, const xcb_button_press_event_t *event,
                            xcb_window_t confine_to, int cursor,
                            bool use_threshold, callback_t callback,
                            const void *extra) {
-    xcb_cursor_t xcursor = cursor ? xcursor_get_cursor(cursor) : XCB_NONE;
+    const xcb_cursor_t xcursor = cursor ? xcursor_get_cursor(cursor) : XCB_NONE;
 
     /* Grab the pointer */
-    xcb_grab_pointer_cookie_t cookie;
     xcb_grab_pointer_reply_t *reply;
     xcb_generic_error_t *error;
 
-    cookie = xcb_grab_pointer(conn,
-                              false,                                                         /* get all pointer events specified by the following mask */
-                              root,                                                          /* grab the root window */
-                              XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, /* which events to let through */
-                              XCB_GRAB_MODE_ASYNC,                                           /* pointer events should continue as normal */
-                              XCB_GRAB_MODE_ASYNC,                                           /* keyboard mode */
-                              confine_to,                                                    /* confine_to = in which window should the cursor stay */
-                              use_threshold ? XCB_NONE : xcursor,                            /* possibly display a special cursor */
-                              XCB_CURRENT_TIME);
+    xcb_grab_pointer_cookie_t cookie = xcb_grab_pointer(conn,
+                                                        false,                                                         /* get all pointer events specified by the following mask */
+                                                        root,                                                          /* grab the root window */
+                                                        XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, /* which events to let through */
+                                                        XCB_GRAB_MODE_ASYNC,                                           /* pointer events should continue as normal */
+                                                        XCB_GRAB_MODE_ASYNC,                                           /* keyboard mode */
+                                                        confine_to,                                                    /* confine_to = in which window should the cursor stay */
+                                                        use_threshold ? XCB_NONE : xcursor,                            /* possibly display a special cursor */
+                                                        XCB_CURRENT_TIME);
 
     if ((reply = xcb_grab_pointer_reply(conn, cookie, &error)) == NULL) {
         ELOG("Could not grab pointer (error_code = %d)\n", error->error_code);
@@ -202,15 +202,14 @@ drag_result_t drag_pointer(Con *con, const xcb_button_press_event_t *event,
     free(reply);
 
     /* Grab the keyboard */
-    xcb_grab_keyboard_cookie_t keyb_cookie;
     xcb_grab_keyboard_reply_t *keyb_reply;
 
-    keyb_cookie = xcb_grab_keyboard(conn,
-                                    false, /* get all keyboard events */
-                                    root,  /* grab the root window */
-                                    XCB_CURRENT_TIME,
-                                    XCB_GRAB_MODE_ASYNC, /* continue processing pointer events as normal */
-                                    XCB_GRAB_MODE_ASYNC  /* keyboard mode */
+    xcb_grab_keyboard_cookie_t keyb_cookie = xcb_grab_keyboard(conn,
+                                                               false, /* get all keyboard events */
+                                                               root,  /* grab the root window */
+                                                               XCB_CURRENT_TIME,
+                                                               XCB_GRAB_MODE_ASYNC, /* continue processing pointer events as normal */
+                                                               XCB_GRAB_MODE_ASYNC  /* keyboard mode */
     );
 
     if ((keyb_reply = xcb_grab_keyboard_reply(conn, keyb_cookie, &error)) == NULL) {
@@ -233,8 +232,9 @@ drag_result_t drag_pointer(Con *con, const xcb_button_press_event_t *event,
         .extra = extra,
     };
     ev_prepare *prepare = &loop.prepare;
-    if (con)
+    if (con) {
         loop.old_rect = con->rect;
+    }
     ev_prepare_init(prepare, xcb_drag_prepare_cb);
     prepare->data = &loop;
     main_set_x11_cb(false);

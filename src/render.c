@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * render.c: Renders (determines position/sizes) the layout tree, updating the
@@ -26,8 +26,9 @@ static void render_con_dockarea(Con *con, Con *child, render_params *p);
  */
 int render_deco_height(void) {
     int deco_height = config.font.height + 4;
-    if (config.font.height & 0x01)
+    if (config.font.height & 0x01) {
         ++deco_height;
+    }
     return deco_height;
 }
 
@@ -84,7 +85,6 @@ void render_con(Con *con) {
         params.y = con->rect.y;
     }
 
-    int i = 0;
     con->mapped = true;
 
     /* if this container contains a window, set the coordinates */
@@ -151,12 +151,14 @@ void render_con(Con *con) {
 
     if (con->layout == L_OUTPUT) {
         /* Skip i3-internal outputs */
-        if (con_is_internal(con))
+        if (con_is_internal(con)) {
             goto free_params;
+        }
         render_output(con);
     } else if (con->type == CT_ROOT) {
         render_root(con, fullscreen);
     } else {
+        int i = 0;
         Con *child;
         TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             assert(params.children > 0);
@@ -205,12 +207,13 @@ void render_con(Con *con) {
                 render_con(child);
             }
 
-            if (params.children != 1)
+            if (params.children != 1) {
                 /* Raise the stack con itself. This will put the stack
                  * decoration on top of every stack window. That way, when a
                  * new window is opened in the stack, the old window will not
                  * obscure part of the decoration (it’s unmapped afterwards). */
                 x_raise_con(con);
+            }
         }
     }
 
@@ -228,9 +231,9 @@ static int *precalculate_sizes(Con *con, render_params *p) {
 
     Con *child;
     int i = 0, assigned = 0;
-    int total = con_rect_size_in_orientation(con);
+    const int total = con_rect_size_in_orientation(con);
     TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
-        double percentage = child->percent > 0.0 ? child->percent : 1.0 / p->children;
+        const double percentage = child->percent > 0.0 ? child->percent : 1.0 / p->children;
         assigned += sizes[i++] = lround(percentage * total);
     }
     assert(assigned == total ||
@@ -247,6 +250,26 @@ static int *precalculate_sizes(Con *con, render_params *p) {
     return sizes;
 }
 
+static bool fullscreen_blocks_floating_render(Con *fullscreen, Con *floating) {
+    if (fullscreen == NULL) {
+        return false;
+    }
+    /* Don’t render floating windows when there is a fullscreen window on that
+     * workspace. Necessary to make floating fullscreen work correctly (ticket
+     * #564). Exception to the above rule: popup_during_fullscreen smart|all. */
+    switch (config.popup_during_fullscreen) {
+        case PDF_LEAVE_FULLSCREEN:
+        case PDF_IGNORE:
+            return true;
+        case PDF_SMART:
+            return fullscreen->window == NULL ||
+                   !con_find_transient_for_window(con_descend_focused(floating), fullscreen->window->id);
+        case PDF_ALL:
+            return con_has_parent(fullscreen, floating);
+    }
+    return false; /* not reachable */
+}
+
 static void render_root(Con *con, Con *fullscreen) {
     Con *output;
     if (!fullscreen) {
@@ -261,8 +284,9 @@ static void render_root(Con *con, Con *fullscreen) {
      * windows/containers so that they overlap on another output. */
     DLOG("Rendering floating windows:\n");
     TAILQ_FOREACH (output, &(con->nodes_head), nodes) {
-        if (con_is_internal(output))
+        if (con_is_internal(output)) {
             continue;
+        }
         /* Get the active workspace of that output */
         Con *content = output_get_content(output);
         if (!content || TAILQ_EMPTY(&(content->focus_head))) {
@@ -273,24 +297,8 @@ static void render_root(Con *con, Con *fullscreen) {
         Con *fullscreen = con_get_fullscreen_covering_ws(workspace);
         Con *child;
         TAILQ_FOREACH (child, &(workspace->floating_head), floating_windows) {
-            if (fullscreen != NULL) {
-                /* Don’t render floating windows when there is a fullscreen
-                 * window on that workspace. Necessary to make floating
-                 * fullscreen work correctly (ticket #564). Exception to the
-                 * above rule: smart popup_during_fullscreen handling (popups
-                 * belonging to the fullscreen app will be rendered). */
-                if (config.popup_during_fullscreen != PDF_SMART || fullscreen->window == NULL) {
-                    continue;
-                }
-
-                Con *floating_child = con_descend_focused(child);
-                if (con_find_transient_for_window(floating_child, fullscreen->window->id)) {
-                    DLOG("Rendering floating child even though in fullscreen mode: "
-                         "floating->transient_for (0x%08x) --> fullscreen->id (0x%08x)\n",
-                         floating_child->window->transient_for, fullscreen->window->id);
-                } else {
-                    continue;
-                }
+            if (fullscreen_blocks_floating_render(fullscreen, child)) {
+                continue;
             }
             DLOG("floating child at (%d,%d) with %d x %d\n",
                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
@@ -352,8 +360,9 @@ static void render_output(Con *con) {
     /* First pass: determine the height of all CT_DOCKAREAs (the sum of their
      * children) and figure out how many pixels we have left for the rest */
     TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
-        if (child->type != CT_DOCKAREA)
+        if (child->type != CT_DOCKAREA) {
             continue;
+        }
 
         child->rect.height = 0;
         TAILQ_FOREACH (dockchild, &(child->nodes_head), nodes) {

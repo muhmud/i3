@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * tree.c: Everything that primarily modifies the layout tree data structure.
@@ -9,8 +9,8 @@
  */
 #include "all.h"
 
-struct Con *croot;
-struct Con *focused;
+Con *croot;
+Con *focused;
 
 struct all_cons_head all_cons = TAILQ_HEAD_INITIALIZER(all_cons);
 
@@ -161,8 +161,9 @@ Con *tree_open_con(Con *con, i3Window *window) {
          * workspace. */
         if (con->type == CT_FLOATING_CON) {
             con = con_descend_tiling_focused(con->parent);
-            if (con->type != CT_WORKSPACE)
+            if (con->type != CT_WORKSPACE) {
                 con = con->parent;
+            }
         }
         DLOG("con = %p\n", con);
     }
@@ -199,17 +200,16 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     }
 
     DLOG("closing %p, kill_window = %d\n", con, kill_window);
-    Con *child, *nextchild;
     bool abort_kill = false;
     /* We cannot use TAILQ_FOREACH because the children get deleted
      * in their parent’s nodes_head */
-    for (child = TAILQ_FIRST(&(con->nodes_head)); child;) {
-        nextchild = TAILQ_NEXT(child, nodes);
+    for (Con *child = TAILQ_FIRST(&(con->nodes_head)); child;) {
+        Con *next_child = TAILQ_NEXT(child, nodes);
         DLOG("killing child=%p\n", child);
         if (!tree_close_internal(child, kill_window, true)) {
             abort_kill = true;
         }
-        child = nextchild;
+        child = next_child;
     }
 
     if (abort_kill) {
@@ -221,42 +221,40 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
         if (kill_window != DONT_KILL_WINDOW) {
             x_window_kill(con->window->id, kill_window);
             return false;
-        } else {
-            xcb_void_cookie_t cookie;
-            /* Ignore any further events by clearing the event mask,
-             * unmap the window,
-             * then reparent it to the root window. */
-            xcb_change_window_attributes(conn, con->window->id,
-                                         XCB_CW_EVENT_MASK, (uint32_t[]){XCB_NONE});
-            xcb_unmap_window(conn, con->window->id);
-            cookie = xcb_reparent_window(conn, con->window->id, root, con->rect.x, con->rect.y);
-
-            /* Ignore X11 errors for the ReparentWindow request.
-             * X11 Errors are returned when the window was already destroyed */
-            add_ignore_event(cookie.sequence, 0);
-
-            /* We are no longer handling this window, thus set WM_STATE to
-             * WM_STATE_WITHDRAWN (see ICCCM 4.1.3.1) */
-            long data[] = {XCB_ICCCM_WM_STATE_WITHDRAWN, XCB_NONE};
-            cookie = xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                                         con->window->id, A_WM_STATE, A_WM_STATE, 32, 2, data);
-
-            /* Remove the window from the save set. All windows in the save set
-             * will be mapped when i3 closes its connection (e.g. when
-             * restarting). This is not what we want, since some apps keep
-             * unmapped windows around and don’t expect them to suddenly be
-             * mapped. See https://bugs.i3wm.org/1617 */
-            xcb_change_save_set(conn, XCB_SET_MODE_DELETE, con->window->id);
-
-            /* Stop receiving ShapeNotify events. */
-            if (shape_supported) {
-                xcb_shape_select_input(conn, con->window->id, false);
-            }
-
-            /* Ignore X11 errors for the ReparentWindow request.
-             * X11 Errors are returned when the window was already destroyed */
-            add_ignore_event(cookie.sequence, 0);
         }
+        /* Ignore any further events by clearing the event mask,
+         * unmap the window,
+         * then reparent it to the root window. */
+        xcb_change_window_attributes(conn, con->window->id,
+                                     XCB_CW_EVENT_MASK, (uint32_t[]){XCB_NONE});
+        xcb_unmap_window(conn, con->window->id);
+        xcb_void_cookie_t cookie = xcb_reparent_window(conn, con->window->id, root, con->rect.x, con->rect.y);
+
+        /* Ignore X11 errors for the ReparentWindow request.
+         * X11 Errors are returned when the window was already destroyed */
+        add_ignore_event(cookie.sequence, 0);
+
+        /* We are no longer handling this window, thus set WM_STATE to
+         * WM_STATE_WITHDRAWN (see ICCCM 4.1.3.1) */
+        long data[] = {XCB_ICCCM_WM_STATE_WITHDRAWN, XCB_NONE};
+        cookie = xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
+                                     con->window->id, A_WM_STATE, A_WM_STATE, 32, 2, data);
+
+        /* Remove the window from the save set. All windows in the save set
+         * will be mapped when i3 closes its connection (e.g. when
+         * restarting). This is not what we want, since some apps keep
+         * unmapped windows around and don’t expect them to suddenly be
+         * mapped. See https://bugs.i3wm.org/1617 */
+        xcb_change_save_set(conn, XCB_SET_MODE_DELETE, con->window->id);
+
+        /* Stop receiving ShapeNotify events. */
+        if (shape_supported) {
+            xcb_shape_select_input(conn, con->window->id, false);
+        }
+
+        /* Ignore X11 errors for the ReparentWindow request.
+         * X11 Errors are returned when the window was already destroyed */
+        add_ignore_event(cookie.sequence, 0);
         ipc_send_window_event("close", con);
         window_free(con->window);
         con->window = NULL;
@@ -293,8 +291,9 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
      * Rendering has to be avoided when dont_kill_parent is set (when
      * tree_close_internal calls itself recursively) because the tree is in a
      * non-renderable state during that time. */
-    if (!dont_kill_parent)
+    if (!dont_kill_parent) {
         tree_render();
+    }
 
     /* kill the X11 part of this container */
     x_con_kill(con);
@@ -313,8 +312,9 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     }
 
     /* check if the parent container is empty now and close it */
-    if (!dont_kill_parent)
+    if (!dont_kill_parent) {
         CALL(parent, on_remove_child);
+    }
 
     return true;
 }
@@ -419,8 +419,9 @@ bool level_down(void) {
         if (child == TAILQ_END(&(next->focus_head))) {
             DLOG("cannot go down\n");
             return false;
-        } else
+        } else {
             next = TAILQ_FIRST(&(next->focus_head));
+        }
     }
 
     con_activate(next);
@@ -449,8 +450,9 @@ static void mark_unmapped(Con *con) {
  *
  */
 void tree_render(void) {
-    if (croot == NULL)
+    if (croot == NULL) {
         return;
+    }
 
     DLOG("-- BEGIN RENDERING --\n");
     /* Reset map state for all nodes in tree */
@@ -659,13 +661,15 @@ void tree_flatten(Con *con) {
     /* We only consider normal containers without windows */
     if (con->type != CT_CON ||
         parent->layout == L_OUTPUT || /* con == "content" */
-        con->window != NULL)
+        con->window != NULL) {
         goto recurse;
+    }
 
     /* Ensure it got only one child */
     child = TAILQ_FIRST(&(con->nodes_head));
-    if (child == NULL || TAILQ_NEXT(child, nodes) != NULL)
+    if (child == NULL || TAILQ_NEXT(child, nodes) != NULL) {
         goto recurse;
+    }
 
     DLOG("child = %p, con = %p, parent = %p\n", child, con, parent);
 
@@ -676,8 +680,9 @@ void tree_flatten(Con *con) {
         (con->layout != L_SPLITH && con->layout != L_SPLITV) ||
         (child->layout != L_SPLITH && child->layout != L_SPLITV) ||
         con_orientation(con) == con_orientation(child) ||
-        con_orientation(child) != con_orientation(parent))
+        con_orientation(child) != con_orientation(parent)) {
         goto recurse;
+    }
 
     DLOG("Alright, I have to flatten this situation now. Stay calm.\n");
     /* 1: save focus */

@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * xcb.c: Helper functions for easier usage of XCB
@@ -31,7 +31,7 @@
 
 /** The XCB_CW_EVENT_MASK for its frame */
 #define FRAME_EVENT_MASK (XCB_EVENT_MASK_BUTTON_PRESS | /* …mouse is pressed/released */                       \
-                          XCB_EVENT_MASK_BUTTON_RELEASE |                                                        \
+                          XCB_EVENT_MASK_BUTTON_RELEASE |                                                      \
                           XCB_EVENT_MASK_POINTER_MOTION |        /* …mouse is moved */                         \
                           XCB_EVENT_MASK_EXPOSURE |              /* …our window needs to be redrawn */         \
                           XCB_EVENT_MASK_STRUCTURE_NOTIFY |      /* …the frame gets destroyed */               \
@@ -97,12 +97,6 @@ xcb_atom_t xcb_get_preferred_window_type(xcb_get_property_reply_t *reply);
  *
  */
 bool xcb_reply_contains_atom(xcb_get_property_reply_t *prop, xcb_atom_t atom);
-
-/**
- * Get depth of visual specified by visualid
- *
- */
-uint16_t get_visual_depth(xcb_visualid_t visual_id);
 
 /**
  * Get visual type specified by visualid

@@ -29,7 +29,7 @@ static bool parsing_padding;
  */
 static int config_map_key_cb(void *params_, const unsigned char *keyVal, size_t keyLen) {
     FREE(cur_key);
-    sasprintf(&(cur_key), "%.*s", keyLen, keyVal);
+    sasprintf(&(cur_key), "%.*s", (int)keyLen, keyVal);
 
     if (strcmp(cur_key, "bindings") == 0) {
         parsing_bindings = true;
@@ -76,8 +76,9 @@ static int config_null_cb(void *params_) {
 static int config_string_cb(void *params_, const unsigned char *val, size_t _len) {
     int len = (int)_len;
     /* The id and socket_path are ignored, we already know them. */
-    if (!strcmp(cur_key, "id") || !strcmp(cur_key, "socket_path"))
+    if (!strcmp(cur_key, "id") || !strcmp(cur_key, "socket_path")) {
         return 1;
+    }
 
     if (parsing_bindings) {
         if (strcmp(cur_key, "command") == 0) {
@@ -188,8 +189,14 @@ static int config_string_cb(void *params_, const unsigned char *val, size_t _len
     }
 
     if (!strcmp(cur_key, "status_command")) {
-        DLOG("command = %.*s\n", len, val);
+        DLOG("status_command = %.*s\n", len, val);
         sasprintf(&config.command, "%.*s", len, val);
+        return 1;
+    }
+
+    if (!strcmp(cur_key, "workspace_command")) {
+        DLOG("workspace_command = %.*s\n", len, val);
+        sasprintf(&config.workspace_command, "%.*s", len, val);
         return 1;
     }
 
@@ -396,16 +403,15 @@ static yajl_callbacks outputs_callbacks = {
 };
 
 /*
- * Start parsing the received bar configuration JSON string
+ * Parse the received bar configuration JSON string
  *
  */
-void parse_config_json(char *json) {
-    yajl_handle handle = yajl_alloc(&outputs_callbacks, NULL, NULL);
-
+void parse_config_json(const unsigned char *json, size_t size) {
     TAILQ_INIT(&(config.bindings));
     TAILQ_INIT(&(config.tray_outputs));
 
-    yajl_status state = yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_handle handle = yajl_alloc(&outputs_callbacks, NULL, NULL);
+    yajl_status state = yajl_parse(handle, json, size);
 
     /* FIXME: Proper error handling for JSON parsing */
     switch (state) {
@@ -418,6 +424,11 @@ void parse_config_json(char *json) {
             break;
     }
 
+    if (config.disable_ws && config.workspace_command) {
+        ELOG("You have specified 'workspace_buttons no'. Your 'workspace_command %s' will be ignored.\n", config.workspace_command);
+        FREE(config.workspace_command);
+    }
+
     yajl_free(handle);
 }
 
@@ -427,16 +438,16 @@ static int i3bar_config_string_cb(void *params_, const unsigned char *val, size_
 }
 
 /*
- * Start parsing the received bar configuration list. The only usecase right
- * now is to automatically get the first bar id.
+ * Parse the received bar configuration list. The only usecase right now is to
+ * automatically get the first bar id.
  *
  */
-void parse_get_first_i3bar_config(char *json) {
+void parse_get_first_i3bar_config(const unsigned char *json, size_t size) {
     yajl_callbacks configs_callbacks = {
         .yajl_string = i3bar_config_string_cb,
     };
     yajl_handle handle = yajl_alloc(&configs_callbacks, NULL, NULL);
-    yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_parse(handle, json, size);
     yajl_free(handle);
 }
 

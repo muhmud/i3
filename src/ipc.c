@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * ipc.c: UNIX domain socket IPC (initialization, client handling, protocol).
@@ -28,7 +28,7 @@ char *current_socketpath = NULL;
 TAILQ_HEAD(ipc_client_head, ipc_client) all_clients = TAILQ_HEAD_INITIALIZER(all_clients);
 
 static void ipc_client_timeout(EV_P_ ev_timer *w, int revents);
-static void ipc_socket_writeable_cb(EV_P_ struct ev_io *w, int revents);
+static void ipc_socket_writeable_cb(EV_P_ ev_io *w, int revents);
 
 static ev_tstamp kill_timeout = 10.0;
 
@@ -66,7 +66,7 @@ static void ipc_push_pending(ipc_client *client) {
     ev_io_start(main_loop, client->write_callback);
 
     if (!client->timeout) {
-        struct ev_timer *timeout = scalloc(1, sizeof(struct ev_timer));
+        ev_timer *timeout = scalloc(1, sizeof(struct ev_timer));
         ev_timer_init(timeout, ipc_client_timeout, kill_timeout, 0.);
         timeout->data = client;
         client->timeout = timeout;
@@ -192,9 +192,8 @@ static void ipc_send_shutdown_event(shutdown_reason_t reason) {
 void ipc_shutdown(shutdown_reason_t reason, int exempt_fd) {
     ipc_send_shutdown_event(reason);
 
-    ipc_client *current;
     while (!TAILQ_EMPTY(&all_clients)) {
-        current = TAILQ_FIRST(&all_clients);
+        ipc_client *current = TAILQ_FIRST(&all_clients);
         if (current->fd != exempt_fd) {
             shutdown(current->fd, SHUT_RDWR);
         }
@@ -216,8 +215,9 @@ IPC_HANDLER(run_command) {
     CommandResult *result = parse_command(command, gen, client);
     free(command);
 
-    if (result->needs_tree_render)
+    if (result->needs_tree_render) {
         tree_render();
+    }
 
     command_result_free(result);
 
@@ -338,10 +338,11 @@ static void dump_binding(yajl_gen gen, Binding *bind) {
     ystr((const char *)(bind->input_type == B_KEYBOARD ? "keyboard" : "mouse"));
 
     ystr("symbol");
-    if (bind->symbol == NULL)
+    if (bind->symbol == NULL) {
         y(null);
-    else
+    } else {
         ystr(bind->symbol);
+    }
 
     ystr("command");
     ystr(bind->command);
@@ -357,7 +358,7 @@ static void dump_binding(yajl_gen gen, Binding *bind) {
     y(map_close);
 }
 
-void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
+void dump_node(yajl_gen gen, Con *con, bool inplace_restart) {
     y(map_open);
     ystr("id");
     y(integer, (uintptr_t)con);
@@ -386,13 +387,14 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
 
     /* provided for backwards compatibility only. */
     ystr("orientation");
-    if (!con_is_split(con))
+    if (!con_is_split(con)) {
         ystr("none");
-    else {
-        if (con_orientation(con) == HORIZ)
+    } else {
+        if (con_orientation(con) == HORIZ) {
             ystr("horizontal");
-        else
+        } else {
             ystr("vertical");
+        }
     }
 
     ystr("scratchpad_state");
@@ -409,10 +411,11 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     }
 
     ystr("percent");
-    if (con->percent == 0.0)
+    if (con->percent == 0.0) {
         y(null);
-    else
+    } else {
         y(double, con->percent);
+    }
 
     ystr("urgent");
     y(bool, con->urgent);
@@ -516,12 +519,13 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     dump_rect(gen, "geometry", con->geometry);
 
     ystr("name");
-    if (con->window && con->window->name)
+    if (con->window && con->window->name) {
         ystr(i3string_as_utf8(con->window->name));
-    else if (con->name != NULL)
+    } else if (con->name != NULL) {
         ystr(con->name);
-    else
+    } else {
         y(null);
+    }
 
     if (con->title_format != NULL) {
         ystr("title_format");
@@ -539,10 +543,11 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     }
 
     ystr("window");
-    if (con->window)
+    if (con->window) {
         y(integer, con->window->id);
-    else
+    } else {
         y(null);
+    }
 
     ystr("window_type");
     if (con->window) {
@@ -571,8 +576,9 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
         } else {
             ystr("unknown");
         }
-    } else
+    } else {
         y(null);
+    }
 
     if (con->window && !inplace_restart) {
         /* Window properties are useless to preserve when restarting because
@@ -600,10 +606,11 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
         }
 
         ystr("transient_for");
-        if (con->window->transient_for == XCB_NONE)
+        if (con->window->transient_for == XCB_NONE) {
             y(null);
-        else
+        } else {
             y(integer, con->window->transient_for);
+        }
 
         y(map_close);
     }
@@ -660,8 +667,9 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
     TAILQ_FOREACH (match, &(con->swallow_head), matches) {
         /* We will generate a new restart_mode match specification after this
          * loop, so skip this one. */
-        if (match->restart_mode)
+        if (match->restart_mode) {
             continue;
+        }
         y(map_open);
         if (match->dock != M_DONTCHECK) {
             ystr("dock");
@@ -714,8 +722,9 @@ void dump_node(yajl_gen gen, struct Con *con, bool inplace_restart) {
 }
 
 static void dump_bar_bindings(yajl_gen gen, Barconfig *config) {
-    if (TAILQ_EMPTY(&(config->bar_bindings)))
+    if (TAILQ_EMPTY(&(config->bar_bindings))) {
         return;
+    }
 
     ystr("bindings");
     y(array_open);
@@ -739,7 +748,7 @@ static void dump_bar_bindings(yajl_gen gen, Barconfig *config) {
 
 static char *canonicalize_output_name(char *name) {
     /* Do not canonicalize special output names. */
-    if (strcasecmp(name, "primary") == 0) {
+    if (strcasecmp(name, "primary") == 0 || strcasecmp(name, "nonprimary") == 0) {
         return name;
     }
     Output *output = get_output_by_name(name, false);
@@ -821,12 +830,14 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
     dump_bar_bindings(gen, config);
 
     ystr("position");
-    if (config->position == P_BOTTOM)
+    if (config->position == P_BOTTOM) {
         ystr("bottom");
-    else
+    } else {
         ystr("top");
+    }
 
     YSTR_IF_SET(status_command);
+    YSTR_IF_SET(workspace_command);
     YSTR_IF_SET(font);
 
     if (config->bar_height) {
@@ -898,10 +909,10 @@ static void dump_bar_config(yajl_gen gen, Barconfig *config) {
 }
 
 IPC_HANDLER(tree) {
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
     yajl_gen gen = ygenalloc();
     dump_node(gen, croot, false);
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 
     const unsigned char *payload;
     ylength length;
@@ -924,8 +935,9 @@ IPC_HANDLER(get_workspaces) {
 
     Con *output;
     TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
-        if (con_is_internal(output))
+        if (con_is_internal(output)) {
             continue;
+        }
         Con *ws;
         TAILQ_FOREACH (ws, &(output_get_content(output)->nodes_head), nodes) {
             assert(ws->type == CT_WORKSPACE);
@@ -1014,10 +1026,11 @@ IPC_HANDLER(get_outputs) {
 
         ystr("current_workspace");
         Con *ws = NULL;
-        if (output->con && (ws = con_get_fullscreen_con(output->con, CF_OUTPUT)))
+        if (output->con && (ws = con_get_fullscreen_con(output->con, CF_OUTPUT))) {
             ystr(ws->name);
-        else
+        } else {
             y(null);
+        }
 
         y(map_close);
     }
@@ -1136,8 +1149,9 @@ IPC_HANDLER(get_bar_config) {
     LOG("IPC: looking for config for bar ID \"%s\"\n", bar_id);
     Barconfig *current, *config = NULL;
     TAILQ_FOREACH (current, &barconfigs, configs) {
-        if (strcmp(current->id, bar_id) != 0)
+        if (strcmp(current->id, bar_id) != 0) {
             continue;
+        }
 
         config = current;
         break;
@@ -1220,20 +1234,15 @@ static int add_subscription(void *extra, const unsigned char *s,
  *
  */
 IPC_HANDLER(subscribe) {
-    yajl_handle p;
-    yajl_status stat;
-
     /* Setup the JSON parser */
     static yajl_callbacks callbacks = {
         .yajl_string = add_subscription,
     };
 
-    p = yalloc(&callbacks, (void *)client);
-    stat = yajl_parse(p, (const unsigned char *)message, message_size);
+    const yajl_handle p = yalloc(&callbacks, client);
+    const yajl_status stat = yajl_parse(p, message, message_size);
     if (stat != yajl_status_ok) {
-        unsigned char *err;
-        err = yajl_get_error(p, true, (const unsigned char *)message,
-                             message_size);
+        unsigned char *err = yajl_get_error(p, true, message, message_size);
         ELOG("YAJL parse error: %s\n", err);
         yajl_free_error(p, err);
 
@@ -1356,24 +1365,18 @@ static int _sync_json_int(void *extra, long long val) {
 }
 
 IPC_HANDLER(sync) {
-    yajl_handle p;
-    yajl_status stat;
-
     /* Setup the JSON parser */
     static yajl_callbacks callbacks = {
         .yajl_map_key = _sync_json_key,
         .yajl_integer = _sync_json_int,
     };
 
-    struct sync_state state;
-    memset(&state, '\0', sizeof(struct sync_state));
-    p = yalloc(&callbacks, (void *)&state);
-    stat = yajl_parse(p, (const unsigned char *)message, message_size);
+    struct sync_state state = {0};
+    yajl_handle p = yalloc(&callbacks, &state);
+    yajl_status stat = yajl_parse(p, message, message_size);
     FREE(state.last_key);
     if (stat != yajl_status_ok) {
-        unsigned char *err;
-        err = yajl_get_error(p, true, (const unsigned char *)message,
-                             message_size);
+        unsigned char *err = yajl_get_error(p, true, message, message_size);
         ELOG("YAJL parse error: %s\n", err);
         yajl_free_error(p, err);
 
@@ -1436,11 +1439,11 @@ handler_t handlers[13] = {
  * at the moment.
  *
  */
-static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
+static void ipc_receive_message(EV_P_ ev_io *w, int revents) {
     uint32_t message_type;
     uint32_t message_length;
     uint8_t *message = NULL;
-    ipc_client *client = (ipc_client *)w->data;
+    ipc_client *client = w->data;
     assert(client->fd == w->fd);
 
     int ret = ipc_recv_message(w->fd, &message_type, &message_length, &message);
@@ -1459,9 +1462,9 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
         return;
     }
 
-    if (message_type >= (sizeof(handlers) / sizeof(handler_t)))
+    if (message_type >= (sizeof(handlers) / sizeof(handler_t))) {
         DLOG("Unhandled message type: %d\n", message_type);
-    else {
+    } else {
         handler_t h = handlers[message_type];
         h(client, message, 0, message_length, message_type);
     }
@@ -1472,7 +1475,7 @@ static void ipc_receive_message(EV_P_ struct ev_io *w, int revents) {
 static void ipc_client_timeout(EV_P_ ev_timer *w, int revents) {
     /* No need to be polite and check for writeability, the other callback would
      * have been called by now. */
-    ipc_client *client = (ipc_client *)w->data;
+    ipc_client *client = w->data;
 
     char *cmdline = NULL;
 #if defined(__linux__) && defined(SO_PEERCRED)
@@ -1532,7 +1535,7 @@ static void ipc_socket_writeable_cb(EV_P_ ev_io *w, int revents) {
  * the list of clients.
  *
  */
-void ipc_new_client(EV_P_ struct ev_io *w, int revents) {
+void ipc_new_client(EV_P_ ev_io *w, int revents) {
     struct sockaddr_un peer;
     socklen_t len = sizeof(struct sockaddr_un);
     int fd;
@@ -1563,12 +1566,12 @@ ipc_client *ipc_new_client_on_fd(EV_P_ int fd) {
     ipc_client *client = scalloc(1, sizeof(ipc_client));
     client->fd = fd;
 
-    client->read_callback = scalloc(1, sizeof(struct ev_io));
+    client->read_callback = scalloc(1, sizeof(ev_io));
     client->read_callback->data = client;
     ev_io_init(client->read_callback, ipc_receive_message, fd, EV_READ);
     ev_io_start(EV_A_ client->read_callback);
 
-    client->write_callback = scalloc(1, sizeof(struct ev_io));
+    client->write_callback = scalloc(1, sizeof(ev_io));
     client->write_callback->data = client;
     ev_io_init(client->write_callback, ipc_socket_writeable_cb, fd, EV_WRITE);
 
@@ -1582,7 +1585,7 @@ ipc_client *ipc_new_client_on_fd(EV_P_ int fd) {
  * generator. Free with yajl_gen_free().
  */
 yajl_gen ipc_marshal_workspace_event(const char *change, Con *current, Con *old) {
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
     yajl_gen gen = ygenalloc();
 
     y(map_open);
@@ -1591,20 +1594,22 @@ yajl_gen ipc_marshal_workspace_event(const char *change, Con *current, Con *old)
     ystr(change);
 
     ystr("current");
-    if (current == NULL)
+    if (current == NULL) {
         y(null);
-    else
+    } else {
         dump_node(gen, current, false);
+    }
 
     ystr("old");
-    if (old == NULL)
+    if (old == NULL) {
         y(null);
-    else
+    } else {
         dump_node(gen, old, false);
+    }
 
     y(map_close);
 
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 
     return gen;
 }
@@ -1634,7 +1639,7 @@ void ipc_send_window_event(const char *property, Con *con) {
     DLOG("Issue IPC window %s event (con = %p, window = 0x%08x)\n",
          property, con, (con->window ? con->window->id : XCB_WINDOW_NONE));
 
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
     yajl_gen gen = ygenalloc();
 
     y(map_open);
@@ -1653,7 +1658,7 @@ void ipc_send_window_event(const char *property, Con *con) {
 
     ipc_send_event("window", I3_IPC_EVENT_WINDOW, (const char *)payload);
     y(free);
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 }
 
 /*
@@ -1661,7 +1666,7 @@ void ipc_send_window_event(const char *property, Con *con) {
  */
 void ipc_send_barconfig_update_event(Barconfig *barconfig) {
     DLOG("Issue barconfig_update event for id = %s\n", barconfig->id);
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
     yajl_gen gen = ygenalloc();
 
     dump_bar_config(gen, barconfig);
@@ -1672,7 +1677,7 @@ void ipc_send_barconfig_update_event(Barconfig *barconfig) {
 
     ipc_send_event("barconfig_update", I3_IPC_EVENT_BARCONFIG_UPDATE, (const char *)payload);
     y(free);
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 }
 
 /*
@@ -1681,7 +1686,7 @@ void ipc_send_barconfig_update_event(Barconfig *barconfig) {
 void ipc_send_binding_event(const char *event_type, Binding *bind, const char *modename) {
     DLOG("Issue IPC binding %s event (sym = %s, code = %d)\n", event_type, bind->symbol, bind->keycode);
 
-    setlocale(LC_NUMERIC, "C");
+    locale_t prev_locale = uselocale(numericC);
 
     yajl_gen gen = ygenalloc();
 
@@ -1709,7 +1714,7 @@ void ipc_send_binding_event(const char *event_type, Binding *bind, const char *m
     ipc_send_event("binding", I3_IPC_EVENT_BINDING, (const char *)payload);
 
     y(free);
-    setlocale(LC_NUMERIC, "");
+    uselocale(prev_locale);
 }
 
 /*

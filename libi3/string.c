@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * string.c: Define an i3String type to automagically handle UTF-8/UCS-2
@@ -113,23 +113,27 @@ i3String *i3string_copy(i3String *str) {
  *
  */
 void i3string_free(i3String *str) {
-    if (str == NULL)
+    if (str == NULL) {
         return;
+    }
     free(str->utf8);
     free(str->ucs2);
     free(str);
 }
 
 static void i3string_ensure_utf8(i3String *str) {
-    if (str->utf8 != NULL)
+    if (str->utf8 != NULL) {
         return;
-    if ((str->utf8 = convert_ucs2_to_utf8(str->ucs2, str->num_glyphs)) != NULL)
+    }
+    if ((str->utf8 = convert_ucs2_to_utf8(str->ucs2, str->num_glyphs)) != NULL) {
         str->num_bytes = strlen(str->utf8);
+    }
 }
 
 static void i3string_ensure_ucs2(i3String *str) {
-    if (str->ucs2 != NULL)
+    if (str->ucs2 != NULL) {
         return;
+    }
     str->ucs2 = convert_utf8_to_ucs2(str->utf8, &str->num_glyphs);
 }
 

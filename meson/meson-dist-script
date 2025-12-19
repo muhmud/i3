@@ -17,6 +17,7 @@ rm -rf \
    docs/slides-2012-03-16/ \
    testcases/.gitignore \
    travis/ \
+   release-notes/ \
    .clang-format \
    .editorconfig \
    i3bar/.gitignore \
@@ -28,7 +29,7 @@ rm -rf \
 
 mkdir build
 cd build
-meson .. -Dprefix=/usr -Ddocs=true -Dmans=true
+meson setup -Dprefix=/usr -Ddocs=true -Dmans=true
 ninja
 cp *.1 ../man/
 cp *.html ../docs/

@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Ensures the urgency hint is cleared properly in the case where i3 set it (due
@@ -19,7 +19,6 @@
 # Ticket: #1825
 # Bug still in: 4.10.3-253-g03799dd
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 focus_on_window_activation urgent

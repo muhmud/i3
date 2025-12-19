@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Test that explicitly defined default mode doesn't cause segfault.
@@ -21,7 +21,6 @@
 use i3test i3_autostart => 0;
 
 my $config = <<EOT;
-# i3 config file (v4)
 mode "default" {
     bindsym X resize
 }

@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * regex.c: Interface to libPCRE (perl compatible regular expressions).
@@ -35,4 +35,4 @@ void regex_free(struct regex *regex);
  * be visible without debug logging.
  *
  */
-bool regex_matches(struct regex *regex, const char *input);
+bool regex_matches(const struct regex *regex, const char *input);

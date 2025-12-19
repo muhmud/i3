@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Verifies that --release key bindings are not shadowed by non-release key
@@ -20,7 +20,6 @@
 # Bug still in: 4.11-103-gc8d51b4
 # Bug introduced with commit bf3cd41b5ddf1e757515ab5fbf811be56e5f69cc
 use i3test i3_config => <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 bindsym Print nop Print

@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Verifies that internal workspaces (those whose name starts with __) cannot be
@@ -25,7 +25,6 @@ sub internal_workspaces {
 }
 
 my $config = <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 EOT
 
@@ -49,7 +48,6 @@ exit_gracefully($pid);
 ################################################################################
 
 $config = <<EOT;
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 bindsym Mod1+1 workspace __foo

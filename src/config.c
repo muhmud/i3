@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * config.c: Configuration file (calling the parser (src/config_parser.c) with
@@ -11,8 +11,6 @@
 #include "all.h"
 
 #include <libgen.h>
-#include <unistd.h>
-
 #include <xkbcommon/xkbcommon.h>
 
 char *current_configpath = NULL;
@@ -42,9 +40,8 @@ static void free_configuration(void) {
     /* First ungrab the keys */
     ungrab_all_keys(conn);
 
-    struct Mode *mode;
     while (!SLIST_EMPTY(&modes)) {
-        mode = SLIST_FIRST(&modes);
+        struct Mode *mode = SLIST_FIRST(&modes);
         FREE(mode->name);
 
         /* Clear the old binding list */
@@ -60,13 +57,14 @@ static void free_configuration(void) {
     }
 
     while (!TAILQ_EMPTY(&assignments)) {
-        struct Assignment *assign = TAILQ_FIRST(&assignments);
-        if (assign->type == A_TO_WORKSPACE || assign->type == A_TO_WORKSPACE_NUMBER)
+        Assignment *assign = TAILQ_FIRST(&assignments);
+        if (assign->type == A_TO_WORKSPACE || assign->type == A_TO_WORKSPACE_NUMBER) {
             FREE(assign->dest.workspace);
-        else if (assign->type == A_COMMAND)
+        } else if (assign->type == A_COMMAND) {
             FREE(assign->dest.command);
-        else if (assign->type == A_TO_OUTPUT)
+        } else if (assign->type == A_TO_OUTPUT) {
             FREE(assign->dest.output);
+        }
         match_free(&(assign->match));
         TAILQ_REMOVE(&assignments, assign, assignments);
         FREE(assign);
@@ -81,12 +79,12 @@ static void free_configuration(void) {
     }
 
     /* Clear bar configs */
-    Barconfig *barconfig;
     while (!TAILQ_EMPTY(&barconfigs)) {
-        barconfig = TAILQ_FIRST(&barconfigs);
+        Barconfig *barconfig = TAILQ_FIRST(&barconfigs);
         FREE(barconfig->id);
-        for (int c = 0; c < barconfig->num_outputs; c++)
+        for (int c = 0; c < barconfig->num_outputs; c++) {
             free(barconfig->outputs[c]);
+        }
 
         while (!TAILQ_EMPTY(&(barconfig->bar_bindings))) {
             struct Barbinding *binding = TAILQ_FIRST(&(barconfig->bar_bindings));
@@ -105,6 +103,7 @@ static void free_configuration(void) {
         FREE(barconfig->outputs);
         FREE(barconfig->socket_path);
         FREE(barconfig->status_command);
+        FREE(barconfig->workspace_command);
         FREE(barconfig->i3bar_command);
         FREE(barconfig->font);
         FREE(barconfig->colors.background);
@@ -223,12 +222,14 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
     config.gaps.left = 0;
 
     /* Set default urgency reset delay to 500ms */
-    if (config.workspace_urgency_timer == 0)
+    if (config.workspace_urgency_timer == 0) {
         config.workspace_urgency_timer = 0.5;
+    }
 
     config.focus_wrapping = FOCUS_WRAPPING_ON;
 
     config.tiling_drag = TILING_DRAG_MODIFIER;
+    config.swap_modifier = XCB_KEY_BUT_MASK_SHIFT;
 
     FREE(current_configpath);
     current_configpath = get_config_path(override_configpath, true);
@@ -258,11 +259,9 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
     TAILQ_INSERT_TAIL(&included_files, file, files);
 
     LOG("Parsing configfile %s\n", resolved_path);
-    struct stack stack;
-    memset(&stack, '\0', sizeof(struct stack));
+    struct stack stack = {0};
     struct parser_ctx ctx = {
         .use_nagbar = (load_type != C_VALIDATE),
-        .assume_v4 = false,
         .stack = &stack,
     };
     SLIST_INIT(&(ctx.variables));
@@ -282,8 +281,8 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
     }
 
     /* Make bar config blocks without a configured font use the i3-wide font. */
-    Barconfig *current;
     if (load_type != C_VALIDATE) {
+        Barconfig *current;
         TAILQ_FOREACH (current, &barconfigs, configs) {
             if (current->font != NULL) {
                 continue;

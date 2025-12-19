@@ -106,6 +106,8 @@ $ENV{PATH} = join(':',
     '@abs_top_builddir@',
     '@abs_top_srcdir@',
     $ENV{PATH});
+# Make sure we don't re-use the existing (developer's) i3 connection
+delete $ENV{I3SOCK};
 
 qx(Xephyr -help 2>&1);
 die "Xephyr was not found in your path. Please install Xephyr (xserver-xephyr on Debian)." if $?;
@@ -203,7 +205,7 @@ for my $display (@displays) {
 # Read previous timing information, if available. We will be able to roughly
 # predict the test duration and schedule a good order for the tests.
 my $timingsjson = slurp('.last_run_timings.json') if -e '.last_run_timings.json';
-%timings = %{decode_json($timingsjson)} if length($timingsjson) > 0;
+%timings = %{decode_json($timingsjson)} if length($timingsjson // '') > 0;
 
 # Re-order the files so that those which took the longest time in the previous
 # run will be started at the beginning to not delay the whole run longer than
@@ -377,7 +379,7 @@ sub take_job {
             }
 
             # count lines before stripping eof-marker otherwise we might
-            # end up with for (1 .. 0) { } which would effectivly skip the loop
+            # end up with for (1 .. 0) { } which would effectively skip the loop
             my $lines = $buf =~ tr/\n//;
             my $t_eof = $buf =~ s/^$TestWorker::EOF$//m;
 

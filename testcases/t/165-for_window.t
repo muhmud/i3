@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 use i3test i3_autostart => 0;
@@ -20,7 +20,6 @@ use X11::XCB qw(PROP_MODE_REPLACE);
 my (@nodes);
 
 my $config = <<'EOT';
-# i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
 # test 1, test 2

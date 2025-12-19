@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  */
@@ -19,16 +19,18 @@
  *
  */
 char *format_placeholders(char *format, placeholder_t *placeholders, int num) {
-    if (format == NULL)
+    if (format == NULL) {
         return NULL;
+    }
 
     /* We have to first iterate over the string to see how much buffer space
      * we need to allocate. */
     int buffer_len = strlen(format) + 1;
     for (char *walk = format; *walk != '\0'; walk++) {
         for (int i = 0; i < num; i++) {
-            if (!CS_STARTS_WITH(walk, placeholders[i].name))
+            if (!CS_STARTS_WITH(walk, placeholders[i].name)) {
                 continue;
+            }
 
             buffer_len = buffer_len - strlen(placeholders[i].name) + strlen(placeholders[i].value);
             walk += strlen(placeholders[i].name) - 1;
@@ -57,8 +59,9 @@ char *format_placeholders(char *format, placeholder_t *placeholders, int num) {
             break;
         }
 
-        if (!matched)
+        if (!matched) {
             *(outwalk++) = *walk;
+        }
     }
 
     *outwalk = '\0';

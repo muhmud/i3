@@ -1,7 +1,7 @@
 /*
  * vim:ts=4:sw=4:expandtab
  *
- * i3 - an improved dynamic tiling window manager
+ * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  */
@@ -48,8 +48,9 @@ static int margin = 4;
  */
 static int sighandler_backtrace(void) {
     char *tmpdir = getenv("TMPDIR");
-    if (tmpdir == NULL)
+    if (tmpdir == NULL) {
         tmpdir = "/tmp";
+    }
 
     pid_t pid_parent = getpid();
 
@@ -111,8 +112,7 @@ static int sighandler_backtrace(void) {
             "-ex", "quit",
             NULL};
         execvp(args[0], args);
-        DLOG("Failed to exec GDB\n");
-        exit(EXIT_FAILURE);
+        err(EXIT_FAILURE, "execvp(gdb)");
     }
     int status = 0;
 
@@ -343,6 +343,7 @@ void setup_signal_handler(void) {
         sigaction(SIGILL, &action, NULL) == -1 ||
         sigaction(SIGABRT, &action, NULL) == -1 ||
         sigaction(SIGFPE, &action, NULL) == -1 ||
-        sigaction(SIGSEGV, &action, NULL) == -1)
+        sigaction(SIGSEGV, &action, NULL) == -1) {
         ELOG("Could not setup signal handler.\n");
+    }
 }

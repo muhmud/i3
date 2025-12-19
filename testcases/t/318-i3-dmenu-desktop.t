@@ -11,7 +11,7 @@
 # • https://build.i3wm.org/docs/ipc.html
 #   (or docs/ipc)
 #
-# • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
+# • https://i3wm.org/downloads/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
 # Verifies that i3-dmenu-desktop correctly parses Exec= lines in .desktop files
@@ -23,6 +23,7 @@ use i3test::Util qw(slurp);
 use File::Temp qw(tempfile tempdir);
 use POSIX qw(mkfifo);
 use JSON::XS qw(decode_json);
+use Config;
 
 my $desktopdir = tempdir(CLEANUP => 1);
 
@@ -39,7 +40,7 @@ mkfifo("$tmpdir/fifo", 0600) or BAIL_OUT "Could not create FIFO: $!";
 
 open(my $i3msg_dump, '>', "$tmpdir/i3-msg");
 say $i3msg_dump <<EOT;
-#!/usr/bin/env perl
+#!$Config{perlpath}
 use strict;
 use warnings;
 use JSON::XS qw(encode_json);
