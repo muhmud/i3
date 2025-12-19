@@ -6,7 +6,7 @@
 project(
   'i3',
   'c',
-  version: '4.24',
+  version: '4.25',
   default_options: [
     'c_std=c11',
     'warning_level=1',  # enable all warnings (-Wall)
@@ -63,7 +63,7 @@ config_h = declare_dependency(
   sources: vcs_tag(
     input: config_h_in,
     output: 'config.h',
-    fallback: meson.project_version() + '-non-git',
+    fallback: meson.project_version() + ' (2025-12-19)',
   )
 )
 
