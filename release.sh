@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # This script is used to prepare a new release of i3.
 
 set -eu
