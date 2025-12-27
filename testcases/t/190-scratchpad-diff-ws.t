@@ -1,4 +1,4 @@
-#!perl
+#!/usr/bin/env perl
 # vim:ts=4:sw=4:expandtab
 #
 # Please read the following documents before working on tests:

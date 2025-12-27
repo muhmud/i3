@@ -1,4 +1,4 @@
-#!perl
+#!/usr/bin/env perl
 # vim:ts=4:sw=4:expandtab
 #
 # Tests whether our WM registration is done with the correct WM_S0 selection.
