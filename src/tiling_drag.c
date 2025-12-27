@@ -333,7 +333,7 @@ void tiling_drag(Con *con, xcb_button_press_event_t *event, bool use_threshold) 
     const orientation_t orientation = orientation_from_direction(direction);
     const position_t position = position_from_direction(direction);
     const layout_t layout = orientation == VERT ? L_SPLITV : L_SPLITH;
-    con_disable_fullscreen(con);
+    con_disable_fullscreen(con, 0);
     switch (drop_type) {
         case DT_CENTER:
             /* Also handles workspaces.*/
@@ -406,7 +406,7 @@ void tiling_drag(Con *con, xcb_button_press_event_t *event, bool use_threshold) 
             assert(false);
         } else if (fs && set_focus && set_fs) {
             /* con was focused & fullscreen, disable other fullscreen container. */
-            con_disable_fullscreen(fs);
+            con_disable_fullscreen(fs, 0);
         } else if (fs) {
             /* con was not focused, prefer other fullscreen container. */
             set_fs = set_focus = false;

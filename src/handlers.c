@@ -1407,7 +1407,7 @@ static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom)
  *
  */
 void handle_event(int type, xcb_generic_event_t *event) {
-    if (type != XCB_MOTION_NOTIFY)
+    if (type != XCB_MOTION_NOTIFY) {
         DLOG("event type %d, xkb_base %d\n", type, xkb_base);
     }
 
@@ -1463,7 +1463,7 @@ void handle_event(int type, xcb_generic_event_t *event) {
                 free(message);
             }
 
-            if (xkb_current_group == state->group)
+            if (xkb_current_group == state->group) {
                 return;
             }
             xkb_current_group = state->group;

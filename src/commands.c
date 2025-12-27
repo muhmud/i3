@@ -818,7 +818,7 @@ out:
 static void disable_global_fullscreen(void) {
     Con *fs = con_get_fullscreen_con(croot, CF_GLOBAL);
     if (fs) {
-        con_disable_fullscreen(fs);
+        con_disable_fullscreen(fs, 0);
     }
 }
 
